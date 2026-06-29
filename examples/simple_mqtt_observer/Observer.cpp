@@ -8,6 +8,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <stdio.h>
 
 #if defined(ESP32) || defined(RP2040_PLATFORM)
 #include <FS.h>
@@ -18,11 +19,6 @@
 
 using namespace Adafruit_LittleFS_Namespace;
 #endif
-#include <RAK13800_W5100S.h>
-#include <SPI.h>
-#include <Utils.h>
-#include <stdio.h>
-#include <stdlib.h>
 
 // small parsing/formatting helpers (file-local)
 
@@ -172,14 +168,14 @@ void Observer::begin(FILESYSTEM *fs) {
   delay(1000);
   // beginNetwork(); // bring up Ethernet (DHCP or static) before connecting MQTT
 
-  // mqttClient = PubSubClient(config.mqttServer, config.serverPort, notifyAll, ethClient);
-  mqttClient = PubSubClient(ethClient);
+  mqttClient = PubSubClient(config.mqttServer, config.serverPort, notifyAll, ethClient);
+  // mqttClient = PubSubClient(ethClient);
 
-  mqttClient.setServer(config.mqttServer, config.serverPort);
-  //  Prefer hostname; if certificate CN/SAN does not match hostname (common when CN is an IP),
-  //  we'll retry with the resolved IP address inside connectMQTT().
+  // mqttClient.setServer(config.mqttServer, config.serverPort);
+  //   Prefer hostname; if certificate CN/SAN does not match hostname (common when CN is an IP),
+  //   we'll retry with the resolved IP address inside connectMQTT().
 
-  mqttClient.setCallback(notifyAll);
+  // mqttClient.setCallback(notifyAll);
 
   // static function, sends the same info to all instances of Observer.
 
@@ -195,10 +191,10 @@ void Observer::begin(FILESYSTEM *fs) {
 // been set (any non-zero config.network.ip), otherwise falls back to DHCP. The
 // MAC is taken from config when set, otherwise derived from the node's pub key.
 void Observer::beginNetwork() {
-  // One-time hardware bring-up: reset the W5100S and bind the Ethernet library
-  // to the correct SPI bus + chip-select. On this board the W5100S sits on SPI1
-  // (separate from the LoRa radio on SPI0), so the library's defaults (default
-  // SPI + CS pin 10) are wrong and must be overridden before begin().
+// One-time hardware bring-up: reset the W5100S and bind the Ethernet library
+// to the correct SPI bus + chip-select. On this board the W5100S sits on SPI1
+// (separate from the LoRa radio on SPI0), so the library's defaults (default
+// SPI + CS pin 10) are wrong and must be overridden before begin().
 #ifdef PIN_ETHERNET_RESET
   pinMode(PIN_ETHERNET_RESET, OUTPUT);
   digitalWrite(PIN_ETHERNET_RESET, LOW);
@@ -273,7 +269,7 @@ void Observer::beginNetwork() {
 bool Observer::syncTimeFromNTP() {
   EthernetUDP udp;
   if (!udp.begin(NTP_LOCAL_PORT)) {
-    Serial.println(F("WARN: NTP: no free UDP socket"));
+    Serial.println("WARN: NTP: no free UDP socket");
     return false;
   }
 
@@ -286,7 +282,7 @@ bool Observer::syncTimeFromNTP() {
 
   if (!udp.beginPacket(NTP_SERVER, NTP_PORT) || udp.write(pkt, NTP_PACKET_SIZE) != NTP_PACKET_SIZE ||
       !udp.endPacket()) {
-    Serial.println(F("WARN: NTP: send failed (DNS/link?)"));
+    Serial.println("WARN: NTP: send failed (DNS/link?)");
     udp.stop();
     return false;
   }
@@ -303,7 +299,7 @@ bool Observer::syncTimeFromNTP() {
                           (uint32_t)pkt[43];
 
       if (secs1900 <= NTP_UNIX_OFFSET) {
-        Serial.println(F("WARN: NTP: implausible reply, ignoring"));
+        Serial.println("WARN: NTP: implausible reply, ignoring");
         return false;
       }
       uint32_t epoch = secs1900 - NTP_UNIX_OFFSET;
@@ -312,14 +308,15 @@ bool Observer::syncTimeFromNTP() {
       if (epoch > getRTCClock()->getCurrentTime()) {
         getRTCClock()->setCurrentTime(epoch);
       }
-      Serial.print(F("INFO: NTP time set, epoch="));
+
+      Serial.print("INFO: NTP time set, epoch=");
       Serial.println(getRTCClock()->getCurrentTime());
       return true;
     }
   }
 
   udp.stop();
-  Serial.println(F("WARN: NTP: no reply (timeout)"));
+  Serial.println("WARN: NTP: no reply (timeout)");
   return false;
 }
 
@@ -330,7 +327,7 @@ No decoding is done with this observer, it's up to the client of the broker to d
 void Observer::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
   MyMesh::logRxRaw(snr, rssi, raw, len);
 
-  if (!isConnected()) {
+  if (!mqttClient.connected()) {
     return;
   }
 
@@ -368,11 +365,15 @@ void Observer::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
   String output;
   serializeJson(doc, output);
 
-  Serial.print(F("Data received: ")); // TODO replace by default logger
-  Serial.println(output);             // TODO replace by default logger
+  Serial.print("[DEBUG] MQTT: data received: ");
+  Serial.println(output);
 
-  mqttClient.publish(topic, output.c_str(), false);
-  // TODO test the returned value and retry 5 times before discarding
+  uint8_t attempt_number = 0;
+  bool success = false;
+  while (attempt_number < 5 && !success) {
+    success = mqttClient.publish(topic, output.c_str(), false);
+    attempt_number++;
+  }
 }
 
 void Observer::loop() {
@@ -398,8 +399,18 @@ void Observer::loop() {
   }
 }
 
-bool Observer::isConnected() {
-  return mqttClient.connected();
+const char *Observer::getStatusMessage(bool online) {
+  StaticJsonDocument<128> jsonData;
+
+  jsonData["node"] = getNodePrefs()->node_name;
+  jsonData["timestamp"] = getRTCClock()->getCurrentTime(); // Unix epoch (set via NTP), not uptime
+
+  jsonData["online"] = online;
+
+  String message;
+  serializeJson(jsonData, message);
+
+  return message.c_str();
 }
 
 bool Observer::connectMQTT() {
@@ -420,33 +431,17 @@ bool Observer::connectMQTT() {
   char willTopic[128];
   snprintf(willTopic, sizeof(willTopic), "%s/%08x/interruption", config.topic, observer_id);
 
-  StaticJsonDocument<128> willDoc;
-  willDoc["online"] = false;
-  willDoc["timestamp"] = getRTCClock()->getCurrentTime(); // Unix epoch (set via NTP), not uptime
-  willDoc["gateway"] = name;
-
-  String willPayload;
-  serializeJson(willDoc, willPayload);
+  const char *willPayload = getStatusMessage(false);
 
   if (strlen(config.username) > 0) {
-    mqttClient.connect(name, config.username, config.password, willTopic, 1, true, willPayload.c_str());
+    mqttClient.connect(name, config.username, config.password, willTopic, 1, true, willPayload);
   } else {
-    mqttClient.connect(name, willTopic, 1, true, willPayload.c_str());
+    mqttClient.connect(name, willTopic, 1, true, willPayload);
   }
 
-  if (isConnected()) {
-    Serial.println(F("INFO: ✓ MQTT connection successful"));
-
-    // Create JSON payload
-    StaticJsonDocument<128> doc;
-    doc["online"] = true;
-    doc["timestamp"] = getRTCClock()->getCurrentTime(); // Unix epoch (set via NTP), not uptime
-    doc["gateway"] = name;
-
-    String output;
-    serializeJson(doc, output);
-
-    mqttClient.publish(willTopic, output.c_str(), false);
+  if (mqttClient.connected()) {
+    Serial.println("[INFO] MQTT: Connection successful");
+    mqttClient.publish(willTopic, getStatusMessage(true), false);
 
 #if ENABLE_COMMANDS == 1
 
@@ -458,26 +453,26 @@ bool Observer::connectMQTT() {
     snprintf(cmd_topic, sizeof(cmd_topic), "%s/commands", config.topic); // TODO add the preset (Band ...)
     mqttClient.subscribe(cmd_topic);
 
-    Serial.print(F("Subscribed to: "));
+    Serial.print("[INFO] MQTT: Subscribed to: ");
     Serial.println(cmd_topic);
 
 #endif
 
   } else {
-    Serial.print(F("ERROR: ✗ MQTT connection failed, rc="));
+    Serial.print("[ERR] MQTT: connection failed, state=");
     Serial.println(mqttClient.state());
   }
 
-  return isConnected();
+  return mqttClient.connected();
 }
 
 void Observer::handleMQTTMessage(char *topic, byte *payload, unsigned int length) {
 
   // TODO use default logger
-  Serial.print(F("INFO: MQTT message received on "));
+  Serial.print("[INFO] MQTT: message received on ");
   Serial.println(topic);
 
-#if ENABLE_COMMANDS == 1
+#if defined(ENABLE_COMMANDS)
   // We only subscribe to the commands topic, so treat any inbound message whose
   // topic ends in "/commands" as a CLI command to execute.
   if (strstr(topic, "/commands") == NULL) {
@@ -487,15 +482,15 @@ void Observer::handleMQTTMessage(char *topic, byte *payload, unsigned int length
   // Copy the payload into a bounded, null-terminated command buffer (MQTT
   // payloads are not null-terminated, and may be zero-length).
   char command[160];
-  unsigned int n = length < sizeof(command) - 1 ? length : sizeof(command) - 1;
+  unsigned int n = min(length, sizeof(command) - 1);
+  // length < sizeof(command) - 1 ? length : sizeof(command) - 1;
   memcpy(command, payload, n);
   command[n] = '\0';
 
-  Serial.print(F("INFO: executing MQTT command: "));
-  Serial.println(command);
+  Serial.print("[INFO] MQTT: executing command: ");
+  Serial.print(command);
 
   char reply[160];
-  reply[0] = '\0';
   handleCommand(0, command, reply); // no sender_timestamp available over MQTT
 
   // Publish the reply on the per-observer ack topic.
@@ -505,9 +500,10 @@ void Observer::handleMQTTMessage(char *topic, byte *payload, unsigned int length
   snprintf(ack_topic, sizeof(ack_topic), "%s/%08x/ack", config.topic, observer_id);
   mqttClient.publish(ack_topic, reply);
 #else
-  // Command handling not compiled in: log a textual payload for debugging.
+  // Command handling not enabled at compile time
+  //  log a textual payload for debugging purposes.
   if (length > 0 && payload[length - 1] == '\0') {
-    Serial.print(F("  "));
+    Serial.print("[DEBUG] MQTT: Commands are disabled, payload received: ");
     Serial.println((char *)payload);
   }
 #endif

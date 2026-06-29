@@ -6,6 +6,10 @@
 
 #include <EthernetClient.h>
 #include <PubSubClient.h>
+#include <RAK13800_W5100S.h>
+#include <SPI.h>
+#include <Utils.h>
+#include <stdlib.h>
 
 struct MQTTConfig { // TODO : refactor for ObserverConfig
   /*
@@ -64,10 +68,11 @@ public:
   void handleCommand(uint32_t sender_timestamp, char *command, char *reply);
 
 private:
+  const char *getStatusMessage(bool online);
+
   void handleMQTTMessage(char *topic, uint8_t *payload, unsigned int length);
 
   bool connectMQTT();
-  bool isConnected();
 
   // Initialise the Ethernet interface from config (static IP or DHCP).
   void beginNetwork();
