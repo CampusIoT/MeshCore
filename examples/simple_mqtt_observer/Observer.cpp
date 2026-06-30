@@ -400,15 +400,17 @@ void Observer::loop() {
 }
 
 const char *Observer::getStatusMessage(bool online) {
-  StaticJsonDocument<128> jsonData;
 
-  jsonData["node"] = getNodePrefs()->node_name;
+  StaticJsonDocument<128> jsonData;
   jsonData["timestamp"] = getRTCClock()->getCurrentTime(); // Unix epoch (set via NTP), not uptime
+  jsonData["node"] = getNodePrefs()->node_name;
 
   jsonData["online"] = online;
 
   String message;
   serializeJson(jsonData, message);
+
+  Serial.println(message);
 
   return message.c_str();
 }

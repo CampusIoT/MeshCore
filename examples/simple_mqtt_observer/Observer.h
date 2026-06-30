@@ -2,7 +2,7 @@
  * TODO: ADD BANNER
  */
 
-#include "MyMesh.h"
+#include "../simple_repeater/MyMesh.h"
 
 #include <EthernetClient.h>
 #include <PubSubClient.h>
