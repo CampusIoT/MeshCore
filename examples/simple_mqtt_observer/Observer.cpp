@@ -399,9 +399,10 @@ void Observer::loop() {
   }
 }
 
-const char *Observer::getStatusMessage(bool online) {
+String Observer::getStatusMessage(bool online) {
 
   StaticJsonDocument<128> jsonData;
+
   jsonData["timestamp"] = getRTCClock()->getCurrentTime(); // Unix epoch (set via NTP), not uptime
   jsonData["node"] = getNodePrefs()->node_name;
 
@@ -410,9 +411,7 @@ const char *Observer::getStatusMessage(bool online) {
   String message;
   serializeJson(jsonData, message);
 
-  Serial.println(message);
-
-  return message.c_str();
+  return message;
 }
 
 bool Observer::connectMQTT() {
@@ -426,14 +425,14 @@ bool Observer::connectMQTT() {
   // TODO add 8 LSB of public key
 
   char *name = getNodePrefs()->node_name;
-  uint8_t *pub_key = self_id.pub_key;
   uint32_t observer_id;
-  memcpy(&observer_id, pub_key, sizeof(observer_id));
+  memcpy(&observer_id, self_id.pub_key, sizeof(observer_id));
 
   char willTopic[128];
   snprintf(willTopic, sizeof(willTopic), "%s/%08x/interruption", config.topic, observer_id);
+  // Needs sanitization: control caracters make it fail to connect and/or mangle messages.
 
-  const char *willPayload = getStatusMessage(false);
+  const char *willPayload = getStatusMessage(false).c_str();
 
   if (strlen(config.username) > 0) {
     mqttClient.connect(name, config.username, config.password, willTopic, 1, true, willPayload);
@@ -443,7 +442,7 @@ bool Observer::connectMQTT() {
 
   if (mqttClient.connected()) {
     Serial.println("[INFO] MQTT: Connection successful");
-    mqttClient.publish(willTopic, getStatusMessage(true), false);
+    mqttClient.publish(willTopic, getStatusMessage(true).c_str(), false);
 
 #if ENABLE_COMMANDS == 1
 
@@ -485,7 +484,6 @@ void Observer::handleMQTTMessage(char *topic, byte *payload, unsigned int length
   // payloads are not null-terminated, and may be zero-length).
   char command[160];
   unsigned int n = min(length, sizeof(command) - 1);
-  // length < sizeof(command) - 1 ? length : sizeof(command) - 1;
   memcpy(command, payload, n);
   command[n] = '\0';
 

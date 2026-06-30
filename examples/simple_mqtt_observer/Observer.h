@@ -68,7 +68,7 @@ public:
   void handleCommand(uint32_t sender_timestamp, char *command, char *reply);
 
 private:
-  const char *getStatusMessage(bool online);
+  String getStatusMessage(bool online);
 
   void handleMQTTMessage(char *topic, uint8_t *payload, unsigned int length);
 
