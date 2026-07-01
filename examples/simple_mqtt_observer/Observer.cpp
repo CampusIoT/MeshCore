@@ -4,8 +4,11 @@
 
 #include "Observer.h"
 
+#include "Utils.h"
+
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <stdio.h>
 
 #if defined(ESP32) || defined(RP2040_PLATFORM)
@@ -45,12 +48,9 @@ static char *matchCmd(char *cmd, const char *kw) {
 }
 
 static void copyArg(char *dst, size_t dstsize, const char *src) {
-  size_t i = 0;
-  while (src[i] != '\0' && i < dstsize - 1) {
-    dst[i] = src[i];
-    i++;
-  }
-  dst[i] = '\0';
+  size_t len = min(strlen(src), dstsize - 1);
+  memcpy(dst, src, len);
+  dst[len] = '\0';
 }
 
 static bool parseIPv4(const char *s, uint8_t out[4]) {
@@ -134,6 +134,10 @@ static void stripTrailingSlashes(char *s) {
 #define NTP_PACKET_SIZE 48
 #define NTP_UNIX_OFFSET 2208988800UL
 
+#ifndef MAX_RETRIES
+#define MAX_RETRIES 5
+#endif
+
 Observer::Observer(mesh::MainBoard &board, mesh::Radio &radio, mesh::MillisecondClock &ms, mesh::RNG &rng,
                    mesh::RTCClock &rtc, mesh::MeshTables &tables)
     : MyMesh(board, radio, ms, rng, rtc, tables) {
@@ -167,15 +171,8 @@ void Observer::begin(FILESYSTEM *fs) {
   // beginNetwork(); // bring up Ethernet (DHCP or static) before connecting MQTT
 
   mqttClient = PubSubClient(config.mqttServer, config.serverPort, notifyAll, ethClient);
-  // mqttClient = PubSubClient(ethClient);
-
-  // mqttClient.setServer(config.mqttServer, config.serverPort);
   //   Prefer hostname; if certificate CN/SAN does not match hostname (common when CN is an IP),
   //   we'll retry with the resolved IP address inside connectMQTT().
-
-  // mqttClient.setCallback(notifyAll);
-
-  // static function, sends the same info to all instances of Observer.
 
   mqttClient.setBufferSize(2048); // Allow larger JSON payloads
   //  Improve connection robustness
@@ -325,40 +322,42 @@ No decoding is done with this observer, it's up to the client of the broker to d
 void Observer::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
   MyMesh::logRxRaw(snr, rssi, raw, len);
 
-  if (!mqttClient.connected()) {
+  if (!isConnected()) {
     return;
   }
 
   uint8_t *pub_key = self_id.pub_key;
   uint32_t observer_id;
   memcpy(&observer_id, pub_key, sizeof(observer_id));
+  // Observer_id is four first bytes, reversed
+  //   key: 00 11 22 33 44 55 66 ...
+  //   id: 33 22 11 00
 
-  char topic[128;];
+  char topic[128];
   snprintf(topic, sizeof(topic), "%s/%08x/raw", config.topic, observer_id);
   // TODO add Band into topic
   // TODO add Datarate into topic
-  // TODO add 8 LSB of public key
 
   StaticJsonDocument<512> doc;
   /* Node info */
   doc["timestamp"] = getRTCClock()->getCurrentTime(); // Unix epoch (set via NTP), not uptime
   doc["gateway"] = getNodePrefs()->node_name;
-  // doc["pub_key"] = pub_key;
-  // TODO add pub_key (hex or base64) in the document
+
+  char pub_key_string[33];
+  mesh::Utils::toHex(pub_key_string, pub_key, 16);
+  doc["pub_key"] = pub_key_string;
+  // Full 16-bytes public key of the observer node.
 
   /* Link info */
   doc["rssi"] = rssi;
   doc["snr"] = snr;
 
-  // Convert data to hex string
+  /* Message info*/
+  doc["length"] = len;
   // TODO: base64 is more compact
   char hexStr[len * 2 + 1];
   mesh::Utils::toHex(hexStr, raw, len);
-  hexStr[len * 2] = '\0';
-
-  /* Message info*/
   doc["data"] = hexStr;
-  doc["length"] = len;
 
   String output;
   serializeJson(doc, output);
@@ -368,9 +367,9 @@ void Observer::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
 
   uint8_t attempt_number = 0;
   bool success = false;
-  while (attempt_number < 5 && !success) {
-    success = mqttClient.publish(topic, output.c_str(), false);
-    attempt_number++;
+  // Allows retries in case of failure
+  while (!success) {
+    success = (mqttClient.publish(topic, output.c_str(), false) || attempt_number++ >= MAX_RETRIES);
   }
 }
 
@@ -402,6 +401,11 @@ String Observer::getStatusMessage(bool online) {
 
   jsonData["timestamp"] = getRTCClock()->getCurrentTime(); // Unix epoch (set via NTP), not uptime
   jsonData["node"] = getNodePrefs()->node_name;
+
+  char pub_key_string[33];
+  mesh::Utils::toHex(pub_key_string, self_id.pub_key, 16);
+  jsonData["pub_key"] = pub_key_string;
+
   jsonData["online"] = online;
 
   String message;
@@ -416,10 +420,6 @@ bool Observer::connectMQTT() {
   }
 
   // Prepare last will message for topic <prefix>/<datarate>/<8lsb>/interruption
-  // TODO add Band into topic
-  // TODO add Datarate into topic
-  // TODO add 8 LSB of public key
-
   char *name = getNodePrefs()->node_name;
   uint32_t observer_id;
   memcpy(&observer_id, self_id.pub_key, sizeof(observer_id));
@@ -436,9 +436,9 @@ bool Observer::connectMQTT() {
     mqttClient.connect(name, willTopic, 1, true, willPayload.c_str());
   }
 
-  if (mqttClient.connected()) {
+  if (isConnected()) {
     Serial.println("[INFO] MQTT: Connection successful");
-    mqttClient.publish(willTopic, getStatusMessage(true).c_str(), false);
+    mqttClient.publish(willTopic, getStatusMessage(true).c_str(), true);
 
 #if ENABLE_COMMANDS == 1
 
@@ -460,7 +460,7 @@ bool Observer::connectMQTT() {
     Serial.println(mqttClient.state());
   }
 
-  return mqttClient.connected();
+  return isConnected();
 }
 
 void Observer::handleMQTTMessage(char *topic, byte *payload, unsigned int length) {

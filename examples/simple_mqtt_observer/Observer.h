@@ -70,6 +70,7 @@ public:
 private:
   void handleMQTTMessage(char *topic, uint8_t *payload, unsigned int length);
 
+  inline bool isConnected() { return mqttClient.connected(); }
   bool connectMQTT();
 
   // Initialise the Ethernet interface from config (static IP or DHCP).
