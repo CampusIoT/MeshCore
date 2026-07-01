@@ -4,8 +4,6 @@
 
 #include "Observer.h"
 
-#include "HardwareSerial.h"
-
 #include <cstddef>
 #include <cstdint>
 #include <stdio.h>
@@ -331,27 +329,26 @@ void Observer::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
     return;
   }
 
-  char topic[128];
-  // snprintf(topic, sizeof(topic), "%s/raw", config.topicPrefix);
   uint8_t *pub_key = self_id.pub_key;
   uint32_t observer_id;
   memcpy(&observer_id, pub_key, sizeof(observer_id));
 
-  // Prepare last will message for topic <prefix>/<datarate>/<8lsb>/interruption
+  char topic[128;];
+  snprintf(topic, sizeof(topic), "%s/%08x/raw", config.topic, observer_id);
   // TODO add Band into topic
   // TODO add Datarate into topic
   // TODO add 8 LSB of public key
-  snprintf(topic, sizeof(topic), "%s/%08x/raw", config.topic, observer_id); // TODO add the preset (Band ...)
 
-  // Create JSON payload
   StaticJsonDocument<512> doc;
+  /* Node info */
   doc["timestamp"] = getRTCClock()->getCurrentTime(); // Unix epoch (set via NTP), not uptime
-  doc["rssi"] = rssi;
-  doc["snr"] = snr;
   doc["gateway"] = getNodePrefs()->node_name;
   // doc["pub_key"] = pub_key;
-
   // TODO add pub_key (hex or base64) in the document
+
+  /* Link info */
+  doc["rssi"] = rssi;
+  doc["snr"] = snr;
 
   // Convert data to hex string
   // TODO: base64 is more compact
@@ -359,6 +356,7 @@ void Observer::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
   mesh::Utils::toHex(hexStr, raw, len);
   hexStr[len * 2] = '\0';
 
+  /* Message info*/
   doc["data"] = hexStr;
   doc["length"] = len;
 
@@ -390,7 +388,7 @@ void Observer::loop() {
   }
 
   // Handle MQTT reconnection
-  if (!mqttClient.connected()) {
+  if (!isConnected()) {
     if (now - last_reconnect_attempt > 5000) {
       last_reconnect_attempt = connectMQTT() ? now : 0;
     }
@@ -400,12 +398,10 @@ void Observer::loop() {
 }
 
 String Observer::getStatusMessage(bool online) {
-
   StaticJsonDocument<128> jsonData;
 
   jsonData["timestamp"] = getRTCClock()->getCurrentTime(); // Unix epoch (set via NTP), not uptime
   jsonData["node"] = getNodePrefs()->node_name;
-
   jsonData["online"] = online;
 
   String message;
@@ -415,7 +411,7 @@ String Observer::getStatusMessage(bool online) {
 }
 
 bool Observer::connectMQTT() {
-  if (mqttClient.connected()) {
+  if (isConnected()) {
     return true;
   }
 
@@ -432,12 +428,12 @@ bool Observer::connectMQTT() {
   snprintf(willTopic, sizeof(willTopic), "%s/%08x/interruption", config.topic, observer_id);
   // Needs sanitization: control caracters make it fail to connect and/or mangle messages.
 
-  const char *willPayload = getStatusMessage(false).c_str();
+  String willPayload = getStatusMessage(false);
 
   if (strlen(config.username) > 0) {
-    mqttClient.connect(name, config.username, config.password, willTopic, 1, true, willPayload);
+    mqttClient.connect(name, config.username, config.password, willTopic, 1, true, willPayload.c_str());
   } else {
-    mqttClient.connect(name, willTopic, 1, true, willPayload);
+    mqttClient.connect(name, willTopic, 1, true, willPayload.c_str());
   }
 
   if (mqttClient.connected()) {
