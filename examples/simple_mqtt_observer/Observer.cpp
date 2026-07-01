@@ -172,14 +172,14 @@ void Observer::begin(FILESYSTEM *fs) {
   delay(1000);
   // beginNetwork(); // bring up Ethernet (DHCP or static) before connecting MQTT
 
-  // mqttClient = PubSubClient(config.mqttServer, config.serverPort, notifyAll, ethClient);
-  mqttClient = PubSubClient(ethClient);
+  mqttClient = PubSubClient(config.mqttServer, config.serverPort, notifyAll, ethClient);
+  // mqttClient = PubSubClient(ethClient);
 
-  mqttClient.setServer(config.mqttServer, config.serverPort);
-  //  Prefer hostname; if certificate CN/SAN does not match hostname (common when CN is an IP),
-  //  we'll retry with the resolved IP address inside connectMQTT().
+  // mqttClient.setServer(config.mqttServer, config.serverPort);
+  //   Prefer hostname; if certificate CN/SAN does not match hostname (common when CN is an IP),
+  //   we'll retry with the resolved IP address inside connectMQTT().
 
-  mqttClient.setCallback(notifyAll);
+  // mqttClient.setCallback(notifyAll);
 
   // static function, sends the same info to all instances of Observer.
 
