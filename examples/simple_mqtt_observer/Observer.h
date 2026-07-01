@@ -88,5 +88,11 @@ private:
   */
   void loadConfig();
 
+  /* Called when changing some settings of the MQTT client. Disconnects properly current session and
+   * reconnects with new parameters*/
   void reloadMQTT();
+
+  /* Creates JSON status messages, containing last successful connection timestamp, node name and current
+   * availability */
+  String getStatusMessage(bool online);
 };

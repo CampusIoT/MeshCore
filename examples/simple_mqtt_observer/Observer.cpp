@@ -334,27 +334,26 @@ void Observer::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
     return;
   }
 
-  char topic[128];
-  // snprintf(topic, sizeof(topic), "%s/raw", config.topicPrefix);
   uint8_t *pub_key = self_id.pub_key;
   uint32_t observer_id;
   memcpy(&observer_id, pub_key, sizeof(observer_id));
 
-  // Prepare last will message for topic <prefix>/<datarate>/<8lsb>/interruption
+  char topic[128;];
+  snprintf(topic, sizeof(topic), "%s/%08x/raw", config.topic, observer_id);
   // TODO add Band into topic
   // TODO add Datarate into topic
   // TODO add 8 LSB of public key
-  snprintf(topic, sizeof(topic), "%s/%08x/raw", config.topic, observer_id); // TODO add the preset (Band ...)
 
-  // Create JSON payload
   StaticJsonDocument<512> doc;
+  /* Node info */
   doc["timestamp"] = getRTCClock()->getCurrentTime(); // Unix epoch (set via NTP), not uptime
-  doc["rssi"] = rssi;
-  doc["snr"] = snr;
   doc["gateway"] = getNodePrefs()->node_name;
   // doc["pub_key"] = pub_key;
-
   // TODO add pub_key (hex or base64) in the document
+
+  /* Link info */
+  doc["rssi"] = rssi;
+  doc["snr"] = snr;
 
   // Convert data to hex string
   // TODO: base64 is more compact
@@ -362,6 +361,7 @@ void Observer::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
   mesh::Utils::toHex(hexStr, raw, len);
   hexStr[len * 2] = '\0';
 
+  /* Message info*/
   doc["data"] = hexStr;
   doc["length"] = len;
 
@@ -389,7 +389,7 @@ void Observer::loop() {
   }
 
   // Handle MQTT reconnection
-  if (!mqttClient.connected()) {
+  if (!isConnected()) {
     if (now - last_reconnect_attempt > 5000) {
       last_reconnect_attempt = connectMQTT() ? now : 0;
     }
@@ -402,8 +402,21 @@ bool Observer::isConnected() {
   return mqttClient.connected();
 }
 
+String Observer::getStatusMessage(bool online) {
+  StaticJsonDocument<128> doc;
+
+  doc["timestamp"] = getRTCClock()->getCurrentTime(); // Unix epoch (set via NTP), not uptime
+  doc["gateway"] = getNodePrefs()->node_name;
+  doc["online"] = online;
+
+  String message;
+  serializeJson(doc, message);
+
+  return message;
+}
+
 bool Observer::connectMQTT() {
-  if (mqttClient.connected()) {
+  if (isConnected()) {
     return true;
   }
 
@@ -413,20 +426,13 @@ bool Observer::connectMQTT() {
   // TODO add 8 LSB of public key
 
   char *name = getNodePrefs()->node_name;
-  uint8_t *pub_key = self_id.pub_key;
   uint32_t observer_id;
-  memcpy(&observer_id, pub_key, sizeof(observer_id));
+  memcpy(&observer_id, self_id.pub_key, sizeof(observer_id));
 
   char willTopic[128];
   snprintf(willTopic, sizeof(willTopic), "%s/%08x/interruption", config.topic, observer_id);
 
-  StaticJsonDocument<128> willDoc;
-  willDoc["online"] = false;
-  willDoc["timestamp"] = getRTCClock()->getCurrentTime(); // Unix epoch (set via NTP), not uptime
-  willDoc["gateway"] = name;
-
-  String willPayload;
-  serializeJson(willDoc, willPayload);
+  String willPayload = getStatusMessage(false);
 
   if (strlen(config.username) > 0) {
     mqttClient.connect(name, config.username, config.password, willTopic, 1, true, willPayload.c_str());
@@ -437,16 +443,7 @@ bool Observer::connectMQTT() {
   if (isConnected()) {
     Serial.println(F("INFO: ✓ MQTT connection successful"));
 
-    // Create JSON payload
-    StaticJsonDocument<128> doc;
-    doc["online"] = true;
-    doc["timestamp"] = getRTCClock()->getCurrentTime(); // Unix epoch (set via NTP), not uptime
-    doc["gateway"] = name;
-
-    String output;
-    serializeJson(doc, output);
-
-    mqttClient.publish(willTopic, output.c_str(), false);
+    mqttClient.publish(willTopic, getStatusMessage(true).c_str(), false);
 
 #if ENABLE_COMMANDS == 1
 
@@ -495,7 +492,6 @@ void Observer::handleMQTTMessage(char *topic, byte *payload, unsigned int length
   Serial.println(command);
 
   char reply[160];
-  reply[0] = '\0';
   handleCommand(0, command, reply); // no sender_timestamp available over MQTT
 
   // Publish the reply on the per-observer ack topic.
