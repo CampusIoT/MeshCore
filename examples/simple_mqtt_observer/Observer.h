@@ -44,7 +44,6 @@ class Observer : public MyMesh {
   unsigned long last_ntp_attempt;
 
   bool ntp_done;
-  bool eth_hw_init;
 
   // PubSubClient takes a plain C function pointer for its callback, so we keep a single static pointer to
   // the live instance to route messages back to it.
@@ -55,8 +54,6 @@ class Observer : public MyMesh {
 public:
   void logRxRaw(float snr, float rssi, const uint8_t raw[], int len);
   // logRx can be used for MeshCore's packets with a valid header but by default, listens to any packet.
-
-  // void logRx(mesh::Packet *pkt, int len, float score);
 
   void begin(FILESYSTEM *fs);
 

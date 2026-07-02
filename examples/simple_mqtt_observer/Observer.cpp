@@ -98,7 +98,6 @@ static void stripTrailingSlashes(char *s) {
 }
 
 #ifndef MQTT_HOST
-// #define MQTT_HOST "127.0.0.1"
 #define MQTT_HOST "test.mosquitto.org"
 #endif
 
