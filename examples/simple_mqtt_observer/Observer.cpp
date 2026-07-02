@@ -426,7 +426,7 @@ bool Observer::connectMQTT() {
 
   char willTopic[128];
   snprintf(willTopic, sizeof(willTopic), "%s/%08x/interruption", config.topic, observer_id);
-  // Needs sanitization: control caracters make it fail to connect and/or mangle messages.
+  // Needs sanitization: control caracters make it fail to connect and/or mangles messages.
 
   String willPayload = getStatusMessage(false);
 
