@@ -4,6 +4,7 @@
 
 #include "Observer.h"
 
+#include "IPAddress.h"
 #include "Utils.h"
 
 #include <cstddef>
@@ -127,6 +128,7 @@ static void stripTrailingSlashes(char *s) {
 // IP/mask/gw/DNS, not the wall-clock time, so we fetch it from here over UDP.
 #ifndef NTP_SERVER
 #define NTP_SERVER "pool.ntp.org"
+// #define NTP_SERVER "192.168.0.1"
 #endif
 #define NTP_PORT        123
 #define NTP_LOCAL_PORT  8888
@@ -274,8 +276,15 @@ bool Observer::syncTimeFromNTP() {
   pkt[2] = 6;          // polling interval
   pkt[3] = 0xEC;       // peer clock precision
 
-  if (!udp.beginPacket(NTP_SERVER, NTP_PORT) || udp.write(pkt, NTP_PACKET_SIZE) != NTP_PACKET_SIZE ||
-      !udp.endPacket()) {
+  IPAddress ip = IPAddress();
+  bool connectionSuccess;
+  if (ip.fromString(NTP_SERVER)) {
+    connectionSuccess = udp.beginPacket(ip, NTP_PORT);
+  } else {
+    connectionSuccess = udp.beginPacket(NTP_SERVER, NTP_PORT);
+  }
+
+  if (!connectionSuccess || udp.write(pkt, NTP_PACKET_SIZE) != NTP_PACKET_SIZE || !udp.endPacket()) {
     Serial.println("WARN: NTP: send failed (DNS/link?)");
     udp.stop();
     return false;
@@ -658,7 +667,7 @@ void Observer::handleCommand(uint32_t sender_timestamp, char *command, char *rep
     memset(config.network.netmask, 0, 4);
     snprintf(reply, 160, "OK DHCP, re-acquiring lease...");
     savePrefs();
-    beginNetwork();
+    // beginNetwork();
     reloadMQTT();
     return;
   }
@@ -669,7 +678,7 @@ void Observer::handleCommand(uint32_t sender_timestamp, char *command, char *rep
     }
     snprintf(reply, 160, "OK ip set, re-applying network...");
     savePrefs();
-    beginNetwork();
+    // beginNetwork();
     reloadMQTT();
     return;
   }
@@ -680,7 +689,7 @@ void Observer::handleCommand(uint32_t sender_timestamp, char *command, char *rep
     }
     snprintf(reply, 160, "OK mask set");
     savePrefs();
-    beginNetwork();
+    // beginNetwork();
     reloadMQTT();
     return;
   }
@@ -691,7 +700,7 @@ void Observer::handleCommand(uint32_t sender_timestamp, char *command, char *rep
     }
     snprintf(reply, 160, "OK gateway set");
     savePrefs();
-    beginNetwork();
+    // beginNetwork();
     reloadMQTT();
     return;
   }
@@ -702,7 +711,7 @@ void Observer::handleCommand(uint32_t sender_timestamp, char *command, char *rep
     }
     snprintf(reply, 160, "OK dns set");
     savePrefs();
-    beginNetwork();
+    // beginNetwork();
     reloadMQTT();
     return;
   }
