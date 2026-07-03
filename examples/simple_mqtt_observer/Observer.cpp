@@ -128,7 +128,6 @@ static void stripTrailingSlashes(char *s) {
 // IP/mask/gw/DNS, not the wall-clock time, so we fetch it from here over UDP.
 #ifndef NTP_SERVER
 #define NTP_SERVER "pool.ntp.org"
-// #define NTP_SERVER "192.168.0.1"
 #endif
 #define NTP_PORT        123
 #define NTP_LOCAL_PORT  8888
