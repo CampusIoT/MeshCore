@@ -1,11 +1,11 @@
-#include <Arduino.h>   // needed for PlatformIO
-#include <Mesh.h>
-
 #include "MyMesh.h"
 
+#include <Arduino.h> // needed for PlatformIO
+#include <Mesh.h>
+
 #ifdef DISPLAY_CLASS
-  #include "UITask.h"
-  static UITask ui_task(display);
+#include "UITask.h"
+static UITask ui_task(display);
 #endif
 
 StdRNG fast_rng;
@@ -14,7 +14,8 @@ SimpleMeshTables tables;
 MyMesh the_mesh(board, radio_driver, *new ArduinoMillis(), fast_rng, rtc_clock, tables);
 
 void halt() {
-  while (1) ;
+  while (1)
+    ;
 }
 
 static char command[160];
@@ -55,7 +56,7 @@ void setup() {
 
   fast_rng.begin(radio_driver.getRngSeed());
 
-  FILESYSTEM* fs;
+  FILESYSTEM *fs;
 #if defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)
   InternalFS.begin();
   fs = &InternalFS;
@@ -70,20 +71,23 @@ void setup() {
   IdentityStore store(LittleFS, "/identity");
   store.begin();
 #else
-  #error "need to define filesystem"
+#error "need to define filesystem"
 #endif
   if (!store.load("_main", the_mesh.self_id)) {
     MESH_DEBUG_PRINTLN("Generating new keypair");
-    the_mesh.self_id = radio_new_identity();   // create new random identity
+    the_mesh.self_id = radio_new_identity(); // create new random identity
     int count = 0;
-    while (count < 10 && (the_mesh.self_id.pub_key[0] == 0x00 || the_mesh.self_id.pub_key[0] == 0xFF)) {  // reserved id hashes
-      the_mesh.self_id = radio_new_identity(); count++;
+    while (count < 10 && (the_mesh.self_id.pub_key[0] == 0x00 ||
+                          the_mesh.self_id.pub_key[0] == 0xFF)) { // reserved id hashes
+      the_mesh.self_id = radio_new_identity();
+      count++;
     }
     store.save("_main", the_mesh.self_id);
   }
 
   Serial.print("Repeater ID: ");
-  mesh::Utils::printHex(Serial, the_mesh.self_id.pub_key, PUB_KEY_SIZE); Serial.println();
+  mesh::Utils::printHex(Serial, the_mesh.self_id.pub_key, PUB_KEY_SIZE);
+  Serial.println();
 
   command[0] = 0;
 
@@ -105,7 +109,7 @@ void setup() {
 
 void loop() {
   int len = strlen(command);
-  while (Serial.available() && len < sizeof(command)-1) {
+  while (Serial.available() && len < sizeof(command) - 1) {
     char c = Serial.read();
     if (c != '\n') {
       command[len++] = c;
@@ -114,20 +118,21 @@ void loop() {
     }
     if (c == '\r') break;
   }
-  if (len == sizeof(command)-1) {  // command buffer full
-    command[sizeof(command)-1] = '\r';
+  if (len == sizeof(command) - 1) { // command buffer full
+    command[sizeof(command) - 1] = '\r';
   }
 
-  if (len > 0 && command[len - 1] == '\r') {  // received complete line
+  if (len > 0 && command[len - 1] == '\r') { // received complete line
     Serial.print('\n');
-    command[len - 1] = 0;  // replace newline with C string null terminator
+    command[len - 1] = 0; // replace newline with C string null terminator
     char reply[160];
-    the_mesh.handleCommand(0, command, reply);  // NOTE: there is no sender_timestamp via serial!
+    the_mesh.handleCommand(0, command, reply); // NOTE: there is no sender_timestamp via serial!
     if (reply[0]) {
-      Serial.print("  -> "); Serial.println(reply);
+      Serial.print("  -> ");
+      Serial.println(reply);
     }
 
-    command[0] = 0;  // reset command buffer
+    command[0] = 0; // reset command buffer
   }
 
 #if defined(PIN_USER_BTN) && defined(_SEEED_SENSECAP_SOLAR_H_)
@@ -138,7 +143,7 @@ void loop() {
       userBtnDownAt = millis();
     } else if ((unsigned long)(millis() - userBtnDownAt) >= USER_BTN_HOLD_OFF_MILLIS) {
       Serial.println("Powering off...");
-      board.powerOff();  // does not return
+      board.powerOff(); // does not return
     }
   } else {
     userBtnDownAt = 0;
