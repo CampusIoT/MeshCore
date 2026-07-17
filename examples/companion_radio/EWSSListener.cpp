@@ -1,22 +1,10 @@
 #include "EWSSListener.h"
 
 #include <cstdint>
-#include <stdexcept>
 #include <string>
 #include <vector>
 
-struct LanguagePack {
-  std::vector<std::string> messageType;
-  std::vector<std::string> regions;
-  std::vector<std::string> hazardCategoryAndType;
-  std::vector<std::string> severity;
-  std::vector<std::string> weekNumber;
-  std::vector<std::string> duration;
-  std::vector<std::string> instructionA;
-  std::vector<std::string> instructionB;
-  std::vector<std::string> days;
-  std::vector<std::string> halfDay;
-};
+
 
 // List of all EWSS fields and possible values.
 // Should probably be moved either in app on phone or as file on filesystem.
@@ -645,67 +633,29 @@ LanguagePack messages = {
   { "am", "pm" }
 };
 
-struct EWM {
-  std::string type;
-  std::string region;
-
-  std::string hazard;
-  std::string severity;
-
-  bool week;
-  std::string duration;
-
-  std::string instrA;
-  std::string instrB;
-
-  std::string time;
-
-}
-
-void EWSSListener::onChannelDataRecv(const mesh::GroupChannel &channel, mesh::Packet *pkt, uint16_t data_type,
-                                     const uint8_t *data, size_t data_len) {
-  MyMesh::onChannelDataRecv(channel, pkt, data_type, data, data_len);
-
-  if (data_type == EWSS_CHANNEL) {
-    handleEWSS(data, data_len);
-  }
-}
-
-/*
-Parses payload and prints EWM on console.
-
-Detail of each field can be found in the Common Alert Message format specification at
-https://www.gsc-europa.eu/sites/default/files/sites/all/files/EWSS-CAMF_in_force.pdf
-*/
-
-void EWSSListener::handleEWSS(const uint8_t *data, size_t len) {
-  EWM message;
-
-  message.type = messages.messageType.at((data[0] >> 6) & 0x03);
-
-  uint16_t regionNumber = (((data[0] << 8) + data[1]) >> 5) & 0x01ff;
-  message.region = messages.messageType.at(regionNumber);
-
-  // Ignoring provider ID here,
-}
-
 /*
 Reads `amount` bits from `data` starting from offset.
 
-Writes resulting bits in outbuffer, first byte might contain padding
+Writes resulting bits in outbuffer, first byte might contain padding at beginning
 
 Both amount and offset are in bits, i.e. an offset of 8 means starting from `data[1]`
 */
-static void readBits(uint8_t *outbuffer, uint8_t *data, uint8_t offset, uint8_t amount) {
-  uint8_t *cursor = data + (offset / 8);
+static uint8_t readBits(uint8_t *outbuffer, const uint8_t *data, uint8_t offset, uint8_t amount) {
+  const uint8_t *cursor = data + (offset / 8);
   // First byte containing needed data
 
+  // Clearing buffer before starting
+  uint8_t usedCells = (amount / 8) + (amount % 8 != 0 ? 1 : 0);
+  for (uint8_t i = 0; i < usedCells; i++) {
+    outbuffer[i] = 0;
+  }
+
   uint8_t readPos = 7 - (offset % 8);
-  uint8_t shiftsRemaining = 7 - (amount % 8);
+  uint8_t shiftsRemaining = ((amount - 1) % 8);
 
   for (uint8_t i = 0; i < amount; i++) {
-    uint8_t bit = (cursor[0] & (1 << readPos)) >> readPos;
-    outbuffer[0] |= bit;
+
+    outbuffer[0] |= ((cursor[0] & (1 << readPos)) >> readPos);
 
     if (shiftsRemaining == 0) {
       outbuffer++;
@@ -717,10 +667,76 @@ static void readBits(uint8_t *outbuffer, uint8_t *data, uint8_t offset, uint8_t 
     if (readPos == 0) {
       cursor++;
     }
+
     readPos = (readPos - 1) % 8;
+  }
+  return amount;
+}
+
+void EWSSListener::onChannelDataRecv(const mesh::GroupChannel &channel, mesh::Packet *pkt, uint16_t data_type,
+                                     const uint8_t *data, size_t data_len) {
+  MyMesh::onChannelDataRecv(channel, pkt, data_type, data, data_len);
+
+  if (data_type == EWSS_CHANNEL) {
+    parseEWSS(data, data_len);
   }
 }
 
+/*
+Parses payload and prints EWM on console.
+
+Detail of each field can be found in the Common Alert Message format specification at
+https://www.gsc-europa.eu/sites/default/files/sites/all/files/EWSS-CAMF_in_force.pdf
+*/
+
+struct EWM EWSSListener::parseEWSS(const uint8_t *data, size_t len) {
+
+  EWM message;
+  uint8_t buffer[3];
+  uint8_t cursor = 0;
+
+  cursor += readBits(buffer, data, cursor, 3);
+  message.type = buffer[0];
+
+  cursor += readBits(buffer, data, cursor, 9);
+  message.region = (data[0] << 8) + data[1];
+
+  cursor += 5; // Provider ID, not handled for now
+
+  cursor += readBits(buffer, data, cursor, 7);
+  message.hazard = buffer[0];
+
+  cursor += readBits(buffer, data, cursor, 2);
+  message.severity = buffer[0];
+
+  cursor += readBits(buffer, data, cursor, 1);
+  message.current_week = buffer[0];
+
+  cursor += 14; // Time of event, not handling for now.
+
+  cursor += readBits(buffer, data, cursor, 2);
+  message.duration = buffer[0];
+
+  cursor += 1; // Type of library
+  cursor += 3; // Version of lib.
+
+  cursor += readBits(buffer, data, cursor, 5);
+  message.instrA = buffer[0];
+
+  cursor += readBits(buffer, data, cursor, 5);
+  message.instrB = buffer[0];
+
+  cursor += 16; // Ellipse centre latitude
+  cursor += 17; // Ellipse centre longitude
+
+  cursor += 5; // Semi-major axis
+  cursor += 5; // Semi-minor axis
+
+  cursor += 6; // Azimuth
+
+  cursor += 2;  // Type of additionnal setting
+  cursor += 15; // Additionnal setting parameter
+}
 
 EWSSListener::EWSSListener(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMeshTables &tables,
                            DataStore &store, AbstractUITask *ui)
