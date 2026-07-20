@@ -105,6 +105,10 @@ public:
   int  getRecentlyHeard(AdvertPath dest[], int max_num);
 
 protected:
+#ifdef MESH_MULTISF
+  int8_t getSelfAdvertTxPower() const override { return _prefs.tx_power_dbm; }   // ADR: advertise our TX power
+  void sendPolyglotAdvertCopies();   // zero-hop self-advert repeats, one per SF in the contact index
+#endif
   float getAirtimeBudgetFactor() const override;
   int getInterferenceThreshold() const override;
   int calcRxDelay(float score, uint32_t air_time) const override;

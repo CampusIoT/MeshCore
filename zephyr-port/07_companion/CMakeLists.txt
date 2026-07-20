@@ -52,23 +52,13 @@ target_include_directories(app PRIVATE
 
 target_compile_definitions(app PRIVATE
   NRF54_PLATFORM=1 RADIOLIB_GODMODE=1 MAX_GROUP_CHANNELS=8 MAX_CONTACTS=100 BLE_PIN_CODE=123456
-  LFS_NO_ASSERT   # mount-fail (e.g. stale/repartitioned region) -> graceful format, not abort()
-  # App TX-power slider max + firmware input check. Pin to the LR2021's absolute (sub-GHz LF)
-  # PA ceiling of 22 dBm, INDEPENDENT of the band/boot default, so a 2.4 GHz build still allows
-  # 22 once tuned back to sub-GHz. The real per-band limit (HF caps at +12) is enforced at the
-  # radio layer by clamp_tx_for_band() in target.cpp. (Otherwise MAX would follow LORA_TX_POWER,
-  # which MC_BAND_2G4 sets to 12 -> the app would be stuck at 12 even on 869 MHz.)
+  LFS_NO_ASSERT   # mount failure -> format instead of abort()
+  # app TX-power slider ceiling; the per-band limit is enforced by clamp_tx_for_band() in target.cpp
   MAX_LORA_TX_POWER=22)
 
-# 2.4 GHz band: build with `-DMC_BAND_2G4=ON` (e.g. west build -- -DMC_BAND_2G4=ON) to boot on
-# the LR2021's 2.4 GHz preset (target.h: 2450 MHz / 500 kHz / SF8 / CR5, TX clamped to +12 dBm)
-# instead of the default 865 MHz sub-GHz. The app has no 2.4 GHz preset, so this is how to put
-# the node on 2.4 GHz for the over-the-air RF test (the choice then persists in prefs).
+# 2.4 GHz band preset (-DMC_BAND_2G4=ON): 2450 MHz / 500 kHz / SF8 / CR5, TX clamped to +12 dBm.
 option(MC_BAND_2G4 "Boot on the 2.4 GHz LoRa preset instead of sub-GHz" OFF)
-# LoRa boot params must be global -D flags (mirroring platformio.ini), not header
-# defines: core headers (e.g. RadioLibWrappers.h getSpreadingFactor) expand LORA_SF
-# in translation units that never include target.h. Keep in sync with the presets
-# documented in src/target.h.
+# LoRa boot params are global -D flags (core headers expand LORA_SF in TUs that never see target.h).
 if(MC_BAND_2G4)
   target_compile_definitions(app PRIVATE MC_BAND_2G4=1
     LORA_FREQ=2450.0f LORA_BW=500.0f LORA_SF=8 LORA_CR=5 LORA_TX_POWER=12)
@@ -76,4 +66,50 @@ if(MC_BAND_2G4)
 else()
   target_compile_definitions(app PRIVATE
     LORA_FREQ=869.618f LORA_BW=62.5f LORA_SF=8 LORA_CR=5 LORA_TX_POWER=22)
+endif()
+
+# Multi-SF receive: LR2021 side detectors above the floor SF decode packets across an SF window
+# (RX-only; the floor stays the TX default). Defaults: SIDES=3 (SF8 floor -> SF9/10/11).
+option(LR2021_MULTISF "Enable LR2021 multi-SF receive (side detectors above the primary SF)" OFF)
+if(LR2021_MULTISF)
+  target_compile_definitions(app PRIVATE LR2021_MULTISF=1)
+  # MESH_MULTISF: the radio-agnostic per-link SF layer (ContactInfo metrics, Packet._tx_sf, SF selection)
+  target_compile_definitions(app PRIVATE MESH_MULTISF=1)
+  if(LR2021_MULTISF_SIDES)
+    target_compile_definitions(app PRIVATE LR2021_MULTISF_SIDES=${LR2021_MULTISF_SIDES})
+  endif()
+  # experiment knob (default off in code): transmit adverts at floor+offset
+  if(DEFINED LR2021_ADVERT_SF_OFFSET)
+    target_compile_definitions(app PRIVATE LR2021_ADVERT_SF_OFFSET=${LR2021_ADVERT_SF_OFFSET})
+  endif()
+  # SIDE_BASE: first side detector at floor+BASE. DETPEAK_ADJ!=0: shift detection thresholds by ADJ.
+  if(DEFINED LR2021_MULTISF_SIDE_BASE)
+    target_compile_definitions(app PRIVATE LR2021_MULTISF_SIDE_BASE=${LR2021_MULTISF_SIDE_BASE})
+  endif()
+  if(DEFINED LR2021_MULTISF_DETPEAK_ADJ)
+    target_compile_definitions(app PRIVATE LR2021_MULTISF_DETPEAK_ADJ=${LR2021_MULTISF_DETPEAK_ADJ})
+  endif()
+  # per-packet rx-pkt logging (heavy: printk per RX) -> off by default
+  if(LR2021_MULTISF_DEBUG)
+    target_compile_definitions(app PRIVATE LR2021_MULTISF_DEBUG=1)
+  endif()
+  message(STATUS "MeshCore: LR2021 multi-SF receive enabled")
+endif()
+
+# Standalone side-detector A/B + diagnostic harness (bypasses the mesh). See ABTEST.md.
+#   west build -d build_abtx -- -DMULTISF_ABTEST_ROLE=tx
+#   west build -d build_abrx -- -DMULTISF_ABTEST_ROLE=rx   (add -DMULTISF_ABTEST_FIX=ON for the FIX arm)
+# Run on the sub-GHz preset (62.5 kHz), not -DMC_BAND_2G4.
+if(DEFINED MULTISF_ABTEST_ROLE)
+  target_compile_definitions(app PRIVATE MULTISF_ABTEST=1)
+  if(MULTISF_ABTEST_ROLE STREQUAL "tx")
+    target_compile_definitions(app PRIVATE MULTISF_ABTEST_TX=1)
+  endif()
+  if(MULTISF_ABTEST_FIX)
+    target_compile_definitions(app PRIVATE MULTISF_ABTEST_FIX=1)
+  endif()
+  if(DEFINED MULTISF_ABTEST_PRIMARY_SF)
+    target_compile_definitions(app PRIVATE MULTISF_ABTEST_PRIMARY_SF=${MULTISF_ABTEST_PRIMARY_SF})
+  endif()
+  message(STATUS "MeshCore: multi-SF A/B test ROLE=${MULTISF_ABTEST_ROLE} FIX=${MULTISF_ABTEST_FIX}")
 endif()

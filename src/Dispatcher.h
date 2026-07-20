@@ -76,6 +76,22 @@ public:
 
   virtual float getLastRSSI() const { return 0; }
   virtual float getLastSNR() const { return 0; }
+
+  // Multi-SF / ADR hooks (default no-op for single-SF radios):
+  //  - getLastRxSF(): spreading factor the last packet was demodulated on (0 = unknown).
+  //  - setTxSF(sf):   force the SF of the NEXT startSendRaw (0 = default/floor SF). The Dispatcher
+  //                   sets this per outbound packet right before sending, so it is per-packet.
+  //  - getFloorRxSF()/getTopRxSF(): the RX window this radio currently demodulates (floor =
+  //                   primary SF, top = highest armed side detector). 0 = unknown/single-SF.
+  //                   Advertised to peers so they can pick a TX SF this node will hear.
+  virtual uint8_t getLastRxSF() const { return 0; }
+  virtual void setTxSF(uint8_t sf) { }
+  virtual uint8_t getFloorRxSF() const { return 0; }
+  virtual uint8_t getTopRxSF() const { return 0; }
+  //  - canRxSF(sf): whether this radio can currently DEMODULATE `sf` (one of its detectors).
+  //                 The link layer gates every per-contact TX SF through this so a node never
+  //                 transmits at an SF it cannot itself receive. Default true = never clamp.
+  virtual bool canRxSF(uint8_t sf) const { return true; }
 };
 
 /**

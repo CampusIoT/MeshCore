@@ -27,6 +27,9 @@ int main(void)
 
 	board.begin();
 	if (!radio_init()) { printk("radio_init FAILED\n"); return 0; }
+#ifdef MULTISF_ABTEST
+	radio_multisf_abtest();   /* standalone side-detector A/B test; never returns (mesh not started) */
+#endif
 	fast_rng.begin(radio_get_rng_seed());
 	if (!InternalFS.begin()) { printk("InternalFS FAILED\n"); return 0; }
 	store.begin();
@@ -62,6 +65,15 @@ int main(void)
 			printk("PREFS: rename -> '%s', /new_prefs exists=%d\n",
 			       the_mesh.getNodePrefs()->node_name, InternalFS.exists("/new_prefs"));
 		}
+
+#ifdef LR2021_MULTISF
+		/* multi-SF diagnostic: poll the LR2021 RX health counters every ~2 s (prints on change) */
+		static int64_t last_rxstats;
+		if (k_uptime_get() - last_rxstats >= 2000) {
+			last_rxstats = k_uptime_get();
+			radio_log_rx_stats();
+		}
+#endif
 
 		k_msleep(1);   /* snappy serial/radio polling for the app's frame bursts */
 	}

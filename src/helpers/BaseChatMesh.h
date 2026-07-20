@@ -56,6 +56,30 @@ struct ConnectionInfo {
 /**
  *  \brief  abstract Mesh class for common 'chat' client
  */
+#ifdef MESH_MULTISF
+// Per-link ADR (multi-SF). Our TX power rides in the advert's officially-"FUTURE" feat1 field,
+// tagged with a 0xAD marker byte so unrelated feat1 uses are ignored by our decoder.
+#define ADR_TX_POWER_UNKNOWN  ((int8_t)-128)
+static inline uint16_t adrEncodeTxPower(int8_t dbm) { return (uint16_t)0xAD00 | (uint8_t)dbm; }
+static inline int8_t   adrDecodeTxPower(uint16_t feat1) {
+  return ((feat1 >> 8) == 0xAD) ? (int8_t)(feat1 & 0xFF) : ADR_TX_POWER_UNKNOWN;
+}
+// Polyglot: our RX window (floor..top SF) rides in feat2, 0x5F marker byte + two SF nibbles.
+
+static inline uint16_t adrEncodeSFWindow(uint8_t floor_sf, uint8_t top_sf) {
+  if (top_sf < floor_sf) top_sf = floor_sf;   // single-SF radio: window degenerates to the floor
+  return (uint16_t)0x5F00 | (uint16_t)((floor_sf & 0x0F) << 4) | (uint16_t)(top_sf & 0x0F);
+}
+// returns true + floor/top when feat2 carries a plausible window (marker + 5 <= floor <= top <= 12)
+static inline bool adrDecodeSFWindow(uint16_t feat2, uint8_t* floor_sf, uint8_t* top_sf) {
+  if ((feat2 >> 8) != 0x5F) return false;
+  uint8_t f = (feat2 >> 4) & 0x0F, t = feat2 & 0x0F;
+  if (f < 5 || f > 12 || t < f || t > 12) return false;
+  *floor_sf = f; *top_sf = t;
+  return true;
+}
+#endif
+
 class BaseChatMesh : public mesh::Mesh {
 
   friend class ContactsIterator;
@@ -95,6 +119,35 @@ protected:
   void populateContactFromAdvert(ContactInfo& ci, const mesh::Identity& id, const AdvertDataParser& parser, uint32_t timestamp);
   ContactInfo* allocateContactSlot(bool transient_only=false); // helper to find slot for new contact
 
+#ifdef MESH_MULTISF
+  // Per-link ADR (multi-SF). Companion overrides getSelfAdvertTxPower() to advertise its TX power
+  // (dBm) in the self-advert; default = unknown -> nothing added to the advert.
+  virtual int8_t getSelfAdvertTxPower() const { return ADR_TX_POWER_UNKNOWN; }
+
+  // The SF that makes a zero-hop transmission audible to contact c (0 = unknown -> floor SF).
+  // Range-guarded: contacts restored from storage may predate the ADR fields, and a bogus SF
+  // would make the driver reject the switch and silently transmit at floor.
+  uint8_t linkTxSF(const ContactInfo& c) const {
+    uint8_t sf = (c.pref_sf >= 5 && c.pref_sf <= 12) ? c.pref_sf
+               : ((c.last_rx_sf >= 5 && c.last_rx_sf <= 12) ? c.last_rx_sf : 0);
+    if (sf == 0) return 0;
+    // Isolation invariant: only ever transmit at an SF we can also RECEIVE (one of our
+    // main+side detectors). A contact whose SF is outside our window is unreachable to us.
+    if (!_radio->canRxSF(sf)) return 0;
+    return sf;
+  }
+  // Per-link SF for a ROUTED direct send: only a zero-hop path ends at the contact itself.
+  // With repeaters in the out_path the first receiver is a repeater listening at the floor
+  uint8_t selectTxSF(const ContactInfo& c) const {
+    return (c.out_path_len == 0) ? linkTxSF(c) : 0;
+  }
+  // distinct non-floor SFs of every contact in the index (for the polyglot advert-back):
+  // fills dest[] (max entries), returns the count
+  int getContactAdvertSFs(uint8_t dest[], int max) const;
+  // Cross-floor flood rescue: clone 'src' and send it zero-hop direct at the contact's SF.
+  void sendCrossSFZeroHopCopy(const ContactInfo& c, const mesh::Packet* src, uint32_t delay_millis);
+#endif
+
   // 'UI' concepts, for sub-classes to implement
   virtual bool isAutoAddEnabled() const { return true; }
   virtual bool shouldAutoAddContactType(uint8_t type) const { return true; }
@@ -130,6 +183,9 @@ protected:
   void onAdvertRecv(mesh::Packet* packet, const mesh::Identity& id, uint32_t timestamp, const uint8_t* app_data, size_t app_data_len) override;
   int searchPeersByHash(const uint8_t* hash) override;
   void getPeerSharedSecret(uint8_t* dest_secret, int peer_idx) override;
+#ifdef MESH_MULTISF
+  uint8_t getPeerTxSF(int peer_idx) const override;   // per-link SF for core-Mesh direct replies
+#endif
   void onPeerDataRecv(mesh::Packet* packet, uint8_t type, int sender_idx, const uint8_t* secret, uint8_t* data, size_t len) override;
   bool onPeerPathRecv(mesh::Packet* packet, int sender_idx, const uint8_t* secret, uint8_t* path, uint8_t path_len, uint8_t extra_type, uint8_t* extra, uint8_t extra_len) override;
   void onAckRecv(mesh::Packet* packet, uint32_t ack_crc) override;

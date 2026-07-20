@@ -281,13 +281,27 @@ void DataStore::savePrefs(const NodePrefs& _prefs, double node_lat, double node_
 }
 
 void DataStore::loadContacts(DataStoreHost* host) {
-File file = openRead(_getContactsChannelsFS(), "/contacts3");
+    // "/contacts4" = the "/contacts3" record + an 8-byte ADR/polyglot tail per contact
+    // (pref_sf, rx_top_sf, last_rx_sf, last_rx_snr, last_rx_rssi[2], their_tx_power, reserved).
+    // A device that last ran older firmware only has "/contacts3".
+    bool v4 = true;
+    File file = openRead(_getContactsChannelsFS(), "/contacts4");
+    if (!file) {
+      v4 = false;
+      file = openRead(_getContactsChannelsFS(), "/contacts3");
+    }
     if (file) {
       bool full = false;
       while (!full) {
         ContactInfo c;
         uint8_t pub_key[32];
         uint8_t unused;
+
+        // the base record predates newer ContactInfo fields: zero the whole struct so anything
+        memset(&c, 0, sizeof(c));
+#ifdef MESH_MULTISF
+        c.their_tx_power = -128;   // unknown
+#endif
 
         bool success = (file.read(pub_key, 32) == 32);
         success = success && (file.read((uint8_t *)&c.name, 32) == 32);
@@ -302,6 +316,21 @@ File file = openRead(_getContactsChannelsFS(), "/contacts3");
         success = success && (file.read((uint8_t *)&c.gps_lat, 4) == 4);
         success = success && (file.read((uint8_t *)&c.gps_lon, 4) == 4);
 
+        if (v4) {
+          uint8_t adr[8];
+          success = success && (file.read(adr, 8) == 8);
+#ifdef MESH_MULTISF
+          if (success) {
+            c.pref_sf        = adr[0];
+            c.rx_top_sf      = adr[1];
+            c.last_rx_sf     = adr[2];
+            c.last_rx_snr    = (int8_t)adr[3];
+            memcpy(&c.last_rx_rssi, &adr[4], 2);
+            c.their_tx_power = (int8_t)adr[6];
+          }
+#endif
+        }
+
         if (!success) break; // EOF
 
         c.id = mesh::Identity(pub_key);
@@ -312,7 +341,7 @@ File file = openRead(_getContactsChannelsFS(), "/contacts3");
 }
 
 void DataStore::saveContacts(DataStoreHost* host, bool (*filter)(const ContactInfo& c)) {
-  File file = openWrite(_getContactsChannelsFS(), "/contacts3");
+  File file = openWrite(_getContactsChannelsFS(), "/contacts4");
   if (file) {
     uint32_t idx = 0;
     ContactInfo c;
@@ -335,6 +364,20 @@ void DataStore::saveContacts(DataStoreHost* host, bool (*filter)(const ContactIn
       success = success && (file.write((uint8_t *)&c.lastmod, 4) == 4);
       success = success && (file.write((uint8_t *)&c.gps_lat, 4) == 4);
       success = success && (file.write((uint8_t *)&c.gps_lon, 4) == 4);
+
+      // ADR/polyglot tail — written by every build (fixed record size), meaningful when MULTISF
+      uint8_t adr[8] = { 0 };
+#ifdef MESH_MULTISF
+      adr[0] = c.pref_sf;
+      adr[1] = c.rx_top_sf;
+      adr[2] = c.last_rx_sf;
+      adr[3] = (uint8_t)c.last_rx_snr;
+      memcpy(&adr[4], &c.last_rx_rssi, 2);
+      adr[6] = (uint8_t)c.their_tx_power;
+#else
+      adr[6] = (uint8_t)-128;   // their_tx_power: unknown
+#endif
+      success = success && (file.write(adr, 8) == 8);
 
       if (!success) break; // write failed
 

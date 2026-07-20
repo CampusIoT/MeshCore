@@ -49,6 +49,11 @@ public:
   uint8_t path[MAX_PATH_SIZE];
   uint8_t payload[MAX_PACKET_PAYLOAD];
   int8_t _snr;
+#ifdef MESH_MULTISF
+  uint8_t _tx_sf;   // multi-SF/ADR: SF to transmit this packet on (0 = floor SF). Runtime-only, not serialized.
+  uint8_t _rx_sf;   // SF this packet was demodulated on (0 = unknown). Stamped at reception. Runtime-only.
+  int16_t _rx_rssi; // RSSI (dBm) at reception, for per-link ADR path loss. Runtime-only, not serialized.
+#endif
 
   /**
    * \brief calculate the hash of payload + type

@@ -91,4 +91,9 @@ bool radio_init();
 uint32_t radio_get_rng_seed();
 void radio_set_params(float freq, float bw, uint8_t sf, uint8_t cr);
 void radio_set_tx_power(int8_t dbm);
+void radio_set_tx_sf(uint8_t sf);   /* multi-SF TX override; 0 = transmit at the RX floor SF */
+void radio_log_rx_stats(void);      /* dump LR2021 RX health counters (print-on-change) */
+#ifdef MULTISF_ABTEST
+void radio_multisf_abtest(void);    /* standalone side-detector A/B test; never returns */
+#endif
 mesh::LocalIdentity radio_new_identity();

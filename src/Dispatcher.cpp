@@ -203,6 +203,11 @@ void Dispatcher::checkRecv() {
       } else {
         if (tryParsePacket(pkt, raw, len)) {
           pkt->_snr = _radio->getLastSNR() * 4.0f;
+#ifdef MESH_MULTISF
+          pkt->_rx_sf = _radio->getLastRxSF();               // SF this packet arrived on (per-link ADR)
+          pkt->_rx_rssi = (int16_t)_radio->getLastRSSI();
+          pkt->_tx_sf = 0;   // pool reuse: a relayed/flooded copy of this packet must go out at floor
+#endif
           score = _radio->packetScore(_radio->getLastSNR(), len);
           air_time = _radio->getEstAirtimeFor(len);
           rx_air_time += air_time;
@@ -323,6 +328,10 @@ void Dispatcher::checkSend() {
     } else {
       memcpy(&raw[len], outbound->payload, outbound->payload_len); len += outbound->payload_len;
 
+#ifdef MESH_MULTISF
+      // per-link ADR: declare this packet's TX SF BEFORE estimating airtime. 
+      _radio->setTxSF(outbound->_tx_sf);
+#endif
       uint32_t max_airtime = _radio->getEstAirtimeFor(len)*3/2;
       outbound_start = _ms->getMillis();
       bool success = _radio->startSendRaw(raw, len);
@@ -359,6 +368,13 @@ Packet* Dispatcher::obtainNewPacket() {
   } else {
     pkt->payload_len = pkt->path_len = 0;
     pkt->_snr = 0;
+#ifdef MESH_MULTISF
+    // pool reuse does NOT re-run the constructor: without this reset a released ADR
+    // packet's _tx_sf leaks into the next packet (observed: an advert flooded at SF11)
+    pkt->_tx_sf = 0;
+    pkt->_rx_sf = 0;
+    pkt->_rx_rssi = 0;
+#endif
   }
   return pkt;
 }

@@ -9,7 +9,33 @@
   #define TXT_ACK_DELAY     200
 #endif
 
+#ifdef MESH_MULTISF
+// True when this received packet's RF transmitter was (almost certainly) the contact itself,
+static inline bool isZeroHopRecv(const mesh::Packet* pkt, const ContactInfo& c) {
+  return pkt->isRouteFlood() ? (pkt->path_len == 0) : (c.out_path_len == 0);
+}
+
+void BaseChatMesh::sendCrossSFZeroHopCopy(const ContactInfo& c, const mesh::Packet* src, uint32_t delay_millis) {
+  uint8_t sf = linkTxSF(c);
+  if (sf == 0 || sf == _radio->getFloorRxSF()) return;   // the floor flood is already audible to them
+  if (c.last_rx_sf == 0) return;   // never heard them zero-hop -> not a neighbor, copy is wasted air
+
+  auto copy = obtainNewPacket();
+  if (copy == NULL) return;        // pool exhausted: the flood still goes out, just not cross-SF
+
+  uint8_t tmp[MAX_TRANS_UNIT];
+  uint8_t len = src->writeTo(tmp);
+  if (!copy->readFrom(tmp, len)) { releasePacket(copy); return; }
+
+  copy->_tx_sf = sf;
+  sendZeroHop(copy, delay_millis);   // direct/zero-hop at their SF; dedup'd against the flood by hash
+}
+#endif
+
 void BaseChatMesh::sendFloodScoped(const ContactInfo& recipient, mesh::Packet* pkt, uint32_t delay_millis) {
+#ifdef MESH_MULTISF
+  sendCrossSFZeroHopCopy(recipient, pkt, delay_millis + 350);   // clone BEFORE pkt is queued
+#endif
   sendFlood(pkt, delay_millis);
 }
 void BaseChatMesh::sendFloodScoped(const mesh::GroupChannel& channel, mesh::Packet* pkt, uint32_t delay_millis) {
@@ -21,6 +47,12 @@ mesh::Packet* BaseChatMesh::createSelfAdvert(const char* name) {
   uint8_t app_data_len;
   {
     AdvertDataBuilder builder(ADV_TYPE_CHAT, name);
+#ifdef MESH_MULTISF
+    { int8_t p = getSelfAdvertTxPower(); if (p != ADR_TX_POWER_UNKNOWN) builder.setFeat1(adrEncodeTxPower(p)); }
+    // polyglot: announce the RX window (floor = our preferred SF, top = highest side detector)
+    // so peers auto-select a TX SF we can hear instead of the user retuning per conversation
+    { uint8_t f = _radio->getFloorRxSF(); if (f) builder.setFeat2(adrEncodeSFWindow(f, _radio->getTopRxSF())); }
+#endif
     app_data_len = builder.encodeTo(app_data);
   }
 
@@ -32,6 +64,10 @@ mesh::Packet* BaseChatMesh::createSelfAdvert(const char* name, double lat, doubl
   uint8_t app_data_len;
   {
     AdvertDataBuilder builder(ADV_TYPE_CHAT, name, lat, lon);
+#ifdef MESH_MULTISF
+    { int8_t p = getSelfAdvertTxPower(); if (p != ADR_TX_POWER_UNKNOWN) builder.setFeat1(adrEncodeTxPower(p)); }
+    { uint8_t f = _radio->getFloorRxSF(); if (f) builder.setFeat2(adrEncodeSFWindow(f, _radio->getTopRxSF())); }
+#endif
     app_data_len = builder.encodeTo(app_data);
   }
 
@@ -44,13 +80,22 @@ void BaseChatMesh::sendAckTo(const ContactInfo& dest, const uint8_t* ack_hash, u
     if (ack) sendFloodScoped(dest, ack, TXT_ACK_DELAY);
   } else {
     uint32_t d = TXT_ACK_DELAY;
+#ifdef MESH_MULTISF
+    uint8_t ack_sf = selectTxSF(dest);   // ACKs follow the contact's SF (advertised pref, else last-heard)
+#endif
     if (getExtraAckTransmitCount() > 0) {
       mesh::Packet* a1 = createMultiAck(ack_hash, ack_len, 1);
+#ifdef MESH_MULTISF
+      if (a1) a1->_tx_sf = ack_sf;
+#endif
       if (a1) sendDirect(a1, dest.out_path, dest.out_path_len, d);
       d += 300;
     }
 
     mesh::Packet* a2 = createAck(ack_hash, ack_len);
+#ifdef MESH_MULTISF
+    if (a2) a2->_tx_sf = ack_sf;
+#endif
     if (a2) sendDirect(a2, dest.out_path, dest.out_path_len, d);
   }
 }
@@ -108,6 +153,12 @@ void BaseChatMesh::populateContactFromAdvert(ContactInfo& ci, const mesh::Identi
   }
   ci.last_advert_timestamp = timestamp;
   ci.lastmod = getRTCClock()->getCurrentTime();
+#ifdef MESH_MULTISF
+  // link metrics start unknown (last_rx_* zeroed by the memset above); TX power from the advert.
+  ci.their_tx_power = adrDecodeTxPower(parser.getFeat1());
+  // polyglot: their advertised RX window -> the index that drives every TX-SF choice to them
+  adrDecodeSFWindow(parser.getFeat2(), &ci.pref_sf, &ci.rx_top_sf);   // stays 0/0 if not carried
+#endif
 }
 
 void BaseChatMesh::onAdvertRecv(mesh::Packet* packet, const mesh::Identity& id, uint32_t timestamp, const uint8_t* app_data, size_t app_data_len) {
@@ -182,6 +233,23 @@ void BaseChatMesh::onAdvertRecv(mesh::Packet* packet, const mesh::Identity& id, 
   }
   from->last_advert_timestamp = timestamp;
   from->lastmod = getRTCClock()->getCurrentTime();
+#ifdef MESH_MULTISF
+  // Per-link ADR: refresh their TX power and advertised RX window (only if this advert carries
+  // them, so an advert without the marker doesn't wipe a known value). Capture RSSI/SNR/SF only
+  // from a 0-hop (direct) advert, where the metrics reflect the real us<->them link, not a relay.
+  { int8_t tp = adrDecodeTxPower(parser.getFeat1()); if (tp != ADR_TX_POWER_UNKNOWN) from->their_tx_power = tp; }
+  { uint8_t f, t;
+    if (adrDecodeSFWindow(parser.getFeat2(), &f, &t)) {
+      from->pref_sf = f; from->rx_top_sf = t;
+      MESH_DEBUG_PRINTLN("onAdvertRecv: %s advertises SF window %u..%u", from->name, (uint32_t)f, (uint32_t)t);
+    }
+  }
+  if (packet->path_len == 0) {
+    if (packet->_rx_sf) from->last_rx_sf = packet->_rx_sf;   // which detector heard their advert = the live link SF
+    from->last_rx_snr = (int8_t)packet->getSNR();
+    from->last_rx_rssi = packet->_rx_rssi;
+  }
+#endif
 
   onDiscoveredContact(*from, is_new, packet->path_len, packet->path);       // let UI know
 }
@@ -213,6 +281,16 @@ void BaseChatMesh::onPeerDataRecv(mesh::Packet* packet, uint8_t type, int sender
   }
 
   ContactInfo& from = contacts[i];
+
+#ifdef MESH_MULTISF
+  // Per-link ADR: learn the SF/SNR/RSSI of this packet — but only when the contact itself was
+  // the transmitter (see isZeroHopRecv); a relayed packet describes the relay's link, not theirs.
+  if (isZeroHopRecv(packet, from)) {
+    if (packet->_rx_sf) from.last_rx_sf = packet->_rx_sf;
+    from.last_rx_snr = (int8_t)packet->getSNR();
+    from.last_rx_rssi = packet->_rx_rssi;
+  }
+#endif
 
   if (type == PAYLOAD_TYPE_TXT_MSG && len > 5) {
     uint32_t timestamp;
@@ -285,6 +363,9 @@ void BaseChatMesh::onPeerDataRecv(mesh::Packet* packet, uint8_t type, int sender
         mesh::Packet* reply = createDatagram(PAYLOAD_TYPE_RESPONSE, from.id, secret, temp_buf, reply_len);
         if (reply) {
           if (from.out_path_len != OUT_PATH_UNKNOWN) {  // we have an out_path, so send DIRECT
+#ifdef MESH_MULTISF
+            reply->_tx_sf = selectTxSF(from);   // enforce the contact's SF on responses too
+#endif
             sendDirect(reply, from.out_path, from.out_path_len, SERVER_RESPONSE_DELAY);
           } else {
             sendFloodScoped(from, reply, SERVER_RESPONSE_DELAY);
@@ -338,6 +419,16 @@ void BaseChatMesh::onAckRecv(mesh::Packet* packet, uint32_t ack_crc) {
     txt_send_timeout = 0;   // matched one we're waiting for, cancel timeout timer
     packet->markDoNotRetransmit();   // ACK was for this node, so don't retransmit
 
+#ifdef MESH_MULTISF
+    // per-link ADR: a 0-hop ACK is a direct RF reception from the contact — as valid a link
+    // sample as a data packet (and often the ONLY traffic on a quiet link)
+    if (isZeroHopRecv(packet, *from)) {
+      if (packet->_rx_sf) from->last_rx_sf = packet->_rx_sf;
+      from->last_rx_snr = (int8_t)packet->getSNR();
+      from->last_rx_rssi = packet->_rx_rssi;
+    }
+#endif
+
     if (packet->isRouteFlood() && from->out_path_len != OUT_PATH_UNKNOWN) {
       // we have direct path, but other node is still sending flood, so maybe they didn't receive reciprocal path properly(?)
       handleReturnPathRetry(*from, packet->path, packet->path_len);
@@ -349,7 +440,12 @@ void BaseChatMesh::handleReturnPathRetry(const ContactInfo& contact, const uint8
   // NOTE: simplest impl is just to re-send a reciprocal return path to sender (DIRECTLY)
   //        override this method in various firmwares, if there's a better strategy
   mesh::Packet* rpath = createPathReturn(contact.id, contact.getSharedSecret(self_id), path, path_len, 0, NULL, 0);
-  if (rpath) sendDirect(rpath, contact.out_path, contact.out_path_len, 3000);   // 3 second delay
+  if (rpath) {
+#ifdef MESH_MULTISF
+    rpath->_tx_sf = selectTxSF(contact);   // path retries follow the contact's SF as well
+#endif
+    sendDirect(rpath, contact.out_path, contact.out_path_len, 3000);   // 3 second delay
+  }
 }
 
 #ifdef MAX_GROUP_CHANNELS
@@ -439,6 +535,9 @@ int  BaseChatMesh::sendMessage(const ContactInfo& recipient, uint32_t timestamp,
     txt_send_timeout = futureMillis(est_timeout = calcFloodTimeoutMillisFor(t));
     rc = MSG_SEND_SENT_FLOOD;
   } else {
+#ifdef MESH_MULTISF
+    pkt->_tx_sf = selectTxSF(recipient);   // every direct exchange follows the contact's SF
+#endif
     sendDirect(pkt, recipient.out_path, recipient.out_path_len);
     txt_send_timeout = futureMillis(est_timeout = calcDirectTimeoutMillisFor(t, recipient.out_path_len));
     rc = MSG_SEND_SENT_DIRECT;
@@ -465,6 +564,9 @@ int  BaseChatMesh::sendCommandData(const ContactInfo& recipient, uint32_t timest
     txt_send_timeout = futureMillis(est_timeout = calcFloodTimeoutMillisFor(t));
     rc = MSG_SEND_SENT_FLOOD;
   } else {
+#ifdef MESH_MULTISF
+    pkt->_tx_sf = selectTxSF(recipient);   // every direct exchange follows the contact's SF
+#endif
     sendDirect(pkt, recipient.out_path, recipient.out_path_len);
     txt_send_timeout = futureMillis(est_timeout = calcDirectTimeoutMillisFor(t, recipient.out_path_len));
     rc = MSG_SEND_SENT_DIRECT;
@@ -584,6 +686,9 @@ int BaseChatMesh::sendLogin(const ContactInfo& recipient, const char* password, 
       est_timeout = calcFloodTimeoutMillisFor(t);
       return MSG_SEND_SENT_FLOOD;
     } else {
+#ifdef MESH_MULTISF
+      pkt->_tx_sf = selectTxSF(recipient);   // every direct exchange follows the contact's SF
+#endif
       sendDirect(pkt, recipient.out_path, recipient.out_path_len);
       est_timeout = calcDirectTimeoutMillisFor(t, recipient.out_path_len);
       return MSG_SEND_SENT_DIRECT;
@@ -609,6 +714,9 @@ int BaseChatMesh::sendAnonReq(const ContactInfo& recipient, const uint8_t* data,
       est_timeout = calcFloodTimeoutMillisFor(t);
       return MSG_SEND_SENT_FLOOD;
     } else {
+#ifdef MESH_MULTISF
+      pkt->_tx_sf = selectTxSF(recipient);   // every direct exchange follows the contact's SF
+#endif
       sendDirect(pkt, recipient.out_path, recipient.out_path_len);
       est_timeout = calcDirectTimeoutMillisFor(t, recipient.out_path_len);
       return MSG_SEND_SENT_DIRECT;
@@ -636,6 +744,9 @@ int  BaseChatMesh::sendRequest(const ContactInfo& recipient, const uint8_t* req_
       est_timeout = calcFloodTimeoutMillisFor(t);
       return MSG_SEND_SENT_FLOOD;
     } else {
+#ifdef MESH_MULTISF
+      pkt->_tx_sf = selectTxSF(recipient);   // every direct exchange follows the contact's SF
+#endif
       sendDirect(pkt, recipient.out_path, recipient.out_path_len);
       est_timeout = calcDirectTimeoutMillisFor(t, recipient.out_path_len);
       return MSG_SEND_SENT_DIRECT;
@@ -663,6 +774,9 @@ int  BaseChatMesh::sendRequest(const ContactInfo& recipient, uint8_t req_type, u
       est_timeout = calcFloodTimeoutMillisFor(t);
       return MSG_SEND_SENT_FLOOD;
     } else {
+#ifdef MESH_MULTISF
+      pkt->_tx_sf = selectTxSF(recipient);   // every direct exchange follows the contact's SF
+#endif
       sendDirect(pkt, recipient.out_path, recipient.out_path_len);
       est_timeout = calcDirectTimeoutMillisFor(t, recipient.out_path_len);
       return MSG_SEND_SENT_DIRECT;
@@ -779,6 +893,9 @@ void BaseChatMesh::checkConnections() {
 
       auto pkt = createDatagram(PAYLOAD_TYPE_REQ, contact->id, contact->getSharedSecret(self_id), data, 9);
       if (pkt) {
+#ifdef MESH_MULTISF
+        pkt->_tx_sf = selectTxSF(*contact);   // keep-alives follow the contact's SF too
+#endif
         sendDirect(pkt, contact->out_path, contact->out_path_len);
       }
     
@@ -827,6 +944,30 @@ ContactInfo* BaseChatMesh::searchContactsByPrefix(const char* name_prefix) {
   }
   return NULL;  // not found
 }
+
+#ifdef MESH_MULTISF
+uint8_t BaseChatMesh::getPeerTxSF(int peer_idx) const {
+  int i = matching_peer_indexes[peer_idx];
+  if (i < 0 || i >= num_contacts) return 0;   // unknown peer -> floor
+  return linkTxSF(contacts[i]);
+}
+
+int BaseChatMesh::getContactAdvertSFs(uint8_t dest[], int max) const {
+  // Every distinct non-floor SF the contact index wants to be spoken to on. Used to repeat a
+  // zero-hop self-advert once per SF so ALL discovered peers hear it, whatever their floor —
+  // the advert-back never needs a manual SF change.
+  uint8_t floor_sf = _radio->getFloorRxSF();
+  int n = 0;
+  for (int i = 0; i < num_contacts && n < max; i++) {
+    uint8_t sf = linkTxSF(contacts[i]);
+    if (sf == 0 || sf == floor_sf) continue;   // the normal floor advert already covers these
+    bool dup = false;
+    for (int j = 0; j < n; j++) if (dest[j] == sf) { dup = true; break; }
+    if (!dup) dest[n++] = sf;
+  }
+  return n;
+}
+#endif
 
 ContactInfo* BaseChatMesh::lookupContactByPubKey(const uint8_t* pub_key, int prefix_len) {
   for (int i = 0; i < num_contacts; i++) {

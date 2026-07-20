@@ -495,6 +495,11 @@ void MyMesh::sendFloodScoped(const TransportKey& scope, mesh::Packet* pkt, uint3
 }
 
 void MyMesh::sendFloodScoped(const ContactInfo& recipient, mesh::Packet* pkt, uint32_t delay_millis) {
+#ifdef MESH_MULTISF
+  // cross-floor rescue: a scoped flood still leaves at OUR floor, clone a zero-hop copy at
+  // the contact's SF first (no-op for same-floor contacts); they dedup by packet hash
+  sendCrossSFZeroHopCopy(recipient, pkt, delay_millis + 350);
+#endif
   // TODO: dynamic send_scope, depending on recipient and current 'home' Region
   if (send_unscoped) {
     sendFlood(pkt, delay_millis, _prefs.path_hash_mode + 1);  // app has explicitly requested un-scoped
@@ -1249,6 +1254,11 @@ void MyMesh::handleCmdFrame(size_t len) {
       } else {
         sendZeroHop(pkt);
       }
+#ifdef MESH_MULTISF
+      // either way, also serve the contacts our floor can't reach (flood stays on the floor;
+      // these zero-hop copies are what higher-/lower-floor neighbors actually hear)
+      sendPolyglotAdvertCopies();
+#endif
       writeOKFrame();
     } else {
       writeErrFrame(ERR_CODE_TABLE_FULL);
@@ -2242,11 +2252,34 @@ bool MyMesh::advert() {
   }
   if (pkt) {
     sendZeroHop(pkt);
+#ifdef MESH_MULTISF
+    sendPolyglotAdvertCopies();   // make this advert audible to every SF in the contact index
+#endif
     return true;
   } else {
     return false;
   }
 }
+
+#ifdef MESH_MULTISF
+void MyMesh::sendPolyglotAdvertCopies() {
+  // Repeat the zero-hop self-advert once per distinct non-floor SF found in the contact index,
+  // each copy transmitted AT that SF
+  uint8_t sfs[4];
+  int n = getContactAdvertSFs(sfs, 4);
+  for (int i = 0; i < n; i++) {
+    mesh::Packet* pkt;
+    if (_prefs.advert_loc_policy == ADVERT_LOC_NONE) {
+      pkt = createSelfAdvert(_prefs.node_name);
+    } else {
+      pkt = createSelfAdvert(_prefs.node_name, sensors.node_lat, sensors.node_lon);
+    }
+    if (pkt == NULL) break;   // packet pool exhausted — remaining SFs catch the next advert
+    pkt->_tx_sf = sfs[i];
+    sendZeroHop(pkt, (i + 1) * 600);   // stagger the long-airtime copies apart
+  }
+}
+#endif
 
 // To check if there is pending work
 bool MyMesh::hasPendingWork() const {

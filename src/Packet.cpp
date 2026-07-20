@@ -8,6 +8,11 @@ Packet::Packet() {
   header = 0;
   path_len = 0;
   payload_len = 0;
+#ifdef MESH_MULTISF
+  _tx_sf = 0;
+  _rx_sf = 0;
+  _rx_rssi = 0;
+#endif
 }
 
 bool Packet::isValidPathLen(uint8_t path_len) {

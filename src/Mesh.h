@@ -83,6 +83,16 @@ protected:
    */
   virtual void getPeerSharedSecret(uint8_t* dest_secret, int peer_idx) { }
 
+#ifdef MESH_MULTISF
+  /**
+   * \brief  per-link ADR: SF for a zero-hop direct reply to this peer (0 = floor SF).
+   *         Core Mesh sends some replies itself ; this lets
+   *         the contacts layer supply the peer's preferred/last-heard SF for those sends.
+   * \param  peer_idx  index of peer, [0..n) where n is what searchPeersByHash() returned
+   */
+  virtual uint8_t getPeerTxSF(int peer_idx) const { return 0; }
+#endif
+
   /**
    * \brief  A (now decrypted) data packet has been received (by a known peer).
    *         NOTE: these can be received multiple times (per sender/msg-id), via different routes

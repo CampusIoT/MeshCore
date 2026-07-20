@@ -128,3 +128,30 @@ from dropping the link right after the PIN.
 - RRAM writes run synchronously (`CONFIG_SOC_FLASH_NRF_RADIO_SYNC_NONE`) to avoid a ~24 s
   settings-write stall while BLE-connected.
 - The board has no chip-controlled TCXO; the radio runs on the crystal (`tcxoVoltage = 0`).
+
+## Quick two-board workflow (multi-SF)
+
+1. Rebuild 
+
+```sh
+cd ~/CAMPUSIOT/MeshCore/zephyr-port/07_companion
+source ~/.zephyr-venv/bin/activate
+
+west build -d build_msf      # multi-SF ON, LR2021_MULTISF_DEBUG ON, RTT console
+west build -d build_stock    # stock, single-SF baseline for comparison
+```
+
+2. Flash both boards
+
+```sh
+pyocd list                                                    # get the two probe UIDs
+pyocd flash -t nrf54l -u <UID_A> build_msf/zephyr/zephyr.hex
+pyocd flash -t nrf54l -u <UID_B> build_msf/zephyr/zephyr.hex
+```
+
+3. Monitor (one terminal per board)
+
+```sh
+pyocd rtt -t nrf54l -u <UID_A>    # attach FIRST, then press the board's RESET button
+pyocd rtt -t nrf54l -u <UID_B>    # catches the boot banner; `pyocd reset` is unreliable on WSL
+```

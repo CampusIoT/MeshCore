@@ -165,6 +165,11 @@ DispatcherAction Mesh::onRecvPacket(Packet* pkt) {
                   if (pkt->isRouteFlood()) {
                     // send a reciprocal return path to sender, but send DIRECTLY!
                     mesh::Packet* rpath = createPathReturn(&src_hash, secret, pkt->path, pkt->path_len, 0, NULL, 0);
+#ifdef MESH_MULTISF
+                    // zero-hop = the peer itself is the receiver: use their preferred/last-heard
+                    // SF, else this handshake is inaudible to a higher-floor (cross-SF) peer
+                    if (rpath && path_len == 0) rpath->_tx_sf = getPeerTxSF(j);
+#endif
                     if (rpath) sendDirect(rpath, path, path_len, 500);
                   }
                 }
