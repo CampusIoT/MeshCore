@@ -6,6 +6,7 @@
  */
 #include <zephyr/kernel.h>
 #include <zephyr/sys/printk.h>
+#include <zephyr/drivers/gpio.h>
 #include <string.h>
 #include <Arduino.h>
 #include <target.h>
@@ -20,6 +21,50 @@ StdRNG fast_rng;
 SimpleMeshTables tables;
 DataStore store(InternalFS, rtc_clock);
 MyMesh the_mesh(radio_driver, fast_rng, rtc_clock, tables, store);
+
+/* USER button (double-click -> send self-advert)
+ * The XIAO nRF54L15 exposes a USER button (devicetree alias sw0 = usr_btn, active-low +
+ * pull-up). CONFIG_INPUT/gpio-keys is not enabled, so the pin is free to poll directly.
+ * Detect a double-click (two debounced presses within USER_BTN_DBLCLICK_MS) each main-loop
+ * tick and fire the_mesh.advert(); the same zero-hop self-advert (+ polyglot copies) the app
+ * sends on CMD_SEND_SELF_ADVERT. */
+#define USER_BTN_DEBOUNCE_MS  25
+#define USER_BTN_DBLCLICK_MS  400
+#if DT_NODE_EXISTS(DT_ALIAS(sw0))
+static const struct gpio_dt_spec user_btn = GPIO_DT_SPEC_GET(DT_ALIAS(sw0), gpios);
+static bool user_button_double_click(void)
+{
+	static bool ready, pressed;
+	static int64_t edge_t, first_click_t;
+	static int clicks;
+
+	if (!ready) {
+		if (!gpio_is_ready_dt(&user_btn) ||
+		    gpio_pin_configure_dt(&user_btn, GPIO_INPUT) != 0) return false;
+		ready = true;
+	}
+
+	int64_t now = k_uptime_get();
+	bool raw = gpio_pin_get_dt(&user_btn) > 0;          /* DT ACTIVE_LOW -> 1 means pressed */
+
+	if (raw != pressed && (now - edge_t) >= USER_BTN_DEBOUNCE_MS) {
+		edge_t  = now;
+		pressed = raw;
+		if (pressed) {                                  /* debounced press edge */
+			if (clicks == 1 && (now - first_click_t) <= USER_BTN_DBLCLICK_MS) {
+				clicks = 0;
+				return true;                        /* second press in the window == double-click */
+			}
+			clicks = 1;
+			first_click_t = now;
+		}
+	}
+	if (clicks == 1 && (now - first_click_t) > USER_BTN_DBLCLICK_MS) clicks = 0;  /* lone click expired */
+	return false;
+}
+#else
+static bool user_button_double_click(void) { return false; }
+#endif
 
 int main(void)
 {
@@ -52,6 +97,11 @@ int main(void)
 		the_mesh.loop();
 		rtc_clock.tick();
 		sensors.loop();
+
+		if (user_button_double_click()) {
+			printk("USER btn: double-click -> self-advert\n");
+			the_mesh.advert();
+		}
 
 		/* A rename from the app (CMD_SET_ADVERT_NAME) only updates prefs; push it to BLE so
 		 * the advertised/GAP name follows without a reboot. */
