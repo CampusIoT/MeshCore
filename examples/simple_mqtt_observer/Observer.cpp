@@ -534,11 +534,21 @@ bool Observer::connectMQTT() {
 #if ENABLE_COMMANDS == 1
 
     char cmd_topic[128];
-    // Prepare last will message for topic <prefix>/<datarate>/<8lsb>/interruption
+    // Per-node command topic: <prefix>/<observer_id>/commands.
+    //
+    // A shared "<prefix>/commands" is subscribed by EVERY observer under the
+    // same prefix, so a single publish there executes an admin CLI command on
+    // all of them at once. Including the observer id scopes each node to its
+    // own topic, and lets broker ACLs grant publish rights per node.
+    //
+    // This remains a remote CLI: whoever can publish here controls this node.
+    // Restrict it with broker ACLs, or build without ENABLE_COMMANDS for a
+    // strictly read-only observer.
+    //
     // TODO add Band into topic
     // TODO add Datarate into topic
-    // TODO add 8 LSB of public key
-    snprintf(cmd_topic, sizeof(cmd_topic), "%s/commands", config.topic); // TODO add the preset (Band ...)
+    snprintf(cmd_topic, sizeof(cmd_topic), "%s/%08lx/commands", config.topic,
+             (unsigned long)observer_id);
     mqttClient.subscribe(cmd_topic);
 
     Serial.print("[INFO] MQTT: Subscribed to: ");
@@ -561,9 +571,18 @@ void Observer::handleMQTTMessage(char *topic, byte *payload, unsigned int length
   Serial.println(topic);
 
 #if defined(ENABLE_COMMANDS)
-  // We only subscribe to the commands topic, so treat any inbound message whose
-  // topic ends in "/commands" as a CLI command to execute.
-  if (strstr(topic, "/commands") == NULL) {
+  uint32_t observer_id;
+  memcpy(&observer_id, self_id.pub_key, sizeof(observer_id));
+
+  // Require an exact match on THIS node's command topic. The previous test only
+  // asked whether "/commands" appeared anywhere in the topic, so any future
+  // subscription whose name happened to contain that substring would have been
+  // executed as a CLI command - PubSubClient routes every subscription through
+  // this one callback.
+  char expected_topic[128];
+  snprintf(expected_topic, sizeof(expected_topic), "%s/%08lx/commands", config.topic,
+           (unsigned long)observer_id);
+  if (strcmp(topic, expected_topic) != 0) {
     return;
   }
 
@@ -581,10 +600,8 @@ void Observer::handleMQTTMessage(char *topic, byte *payload, unsigned int length
   handleCommand(0, command, reply); // no sender_timestamp available over MQTT
 
   // Publish the reply on the per-observer ack topic.
-  uint32_t observer_id;
-  memcpy(&observer_id, self_id.pub_key, sizeof(observer_id));
   char ack_topic[128];
-  snprintf(ack_topic, sizeof(ack_topic), "%s/%08x/ack", config.topic, observer_id);
+  snprintf(ack_topic, sizeof(ack_topic), "%s/%08lx/ack", config.topic, (unsigned long)observer_id);
   mqttClient.publish(ack_topic, reply);
 #else
   // Command handling not enabled at compile time
