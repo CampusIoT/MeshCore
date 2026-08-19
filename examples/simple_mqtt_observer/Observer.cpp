@@ -144,6 +144,9 @@ Observer::Observer(mesh::MainBoard &board, mesh::Radio &radio, mesh::Millisecond
 
   memset(&config, 0, sizeof(config));
   last_reconnect_attempt = 0;
+  n_publish_errors = 0;
+  n_queue_drops = 0;
+  _q_head = _q_tail = _q_count = 0;
 
   Observer::instance = this;
 
@@ -329,9 +332,54 @@ No decoding is done with this observer, it's up to the client of the broker to d
 void Observer::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
   MyMesh::logRxRaw(snr, rssi, raw, len);
 
-  if (!isConnected()) {
-    return;
+  if (len <= 0 || len > (int)MAX_TRANS_UNIT) {
+    return; // defensive: never index the ring with an out-of-range length
   }
+
+  // Capture only - no JSON, no SPI, no TCP. See the RxSample comment in
+  // Observer.h for why publishing from this call site can freeze the node.
+  //
+  // Queued regardless of connection state, so a short broker outage is covered
+  // by the ring rather than losing every packet during it.
+  if (_q_count == OBSERVER_QUEUE_LEN) {
+    // Full: drop the OLDEST sample so the ring always holds the freshest data.
+    _q_tail = (_q_tail + 1) % OBSERVER_QUEUE_LEN;
+    _q_count--;
+    n_queue_drops++;
+  }
+
+  RxSample &s = _queue[_q_head];
+  s.timestamp = getRTCClock()->getCurrentTime(); // Unix epoch (set via NTP), not uptime
+  s.rssi = rssi;
+  s.snr = snr;
+  s.len = (uint16_t)len;
+  memcpy(s.raw, raw, len);
+
+  _q_head = (_q_head + 1) % OBSERVER_QUEUE_LEN;
+  _q_count++;
+}
+
+bool Observer::publishNext() {
+  if (_q_count == 0) return false;
+
+  // Capacity gate - deliberately BEFORE any serialisation.
+  //
+  // socketSend() opens with an UNBOUNDED spin waiting for W5100S TX-buffer
+  // space: it only breaks if the socket leaves ESTABLISHED/CLOSE_WAIT, so a peer
+  // that stops reading (zero window) holds it there indefinitely.
+  // availableForWrite() -> socketSendAvailable() is a single SPI read with no
+  // loop, so asking first keeps us out of that spin for free.
+  //
+  // Checked against the worst-case frame rather than this sample's actual size:
+  // knowing the actual size would mean serialising first, and a blocked socket
+  // would then burn a full hex-encode + JSON build + String allocation on every
+  // loop() pass only to discard it. Being slightly conservative costs nothing -
+  // the sample stays queued either way.
+  if ((size_t)ethClient.availableForWrite() < OBSERVER_MAX_WIRE_LEN) {
+    return false; // no room, or socket not writable: retry next pass
+  }
+
+  const RxSample &s = _queue[_q_tail];
 
   uint8_t *pub_key = self_id.pub_key;
   uint32_t observer_id;
@@ -347,7 +395,7 @@ void Observer::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
 
   StaticJsonDocument<512> doc;
   /* Node info */
-  doc["timestamp"] = getRTCClock()->getCurrentTime(); // Unix epoch (set via NTP), not uptime
+  doc["timestamp"] = s.timestamp;
   doc["gateway"] = getNodePrefs()->node_name;
 
   char pub_key_string[33];
@@ -356,14 +404,14 @@ void Observer::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
   // Full 16-bytes public key of the observer node.
 
   /* Link info */
-  doc["rssi"] = rssi;
-  doc["snr"] = snr;
+  doc["rssi"] = s.rssi;
+  doc["snr"] = s.snr;
 
   /* Message info*/
-  doc["length"] = len;
+  doc["length"] = s.len;
   // TODO: base64 is more compact
-  char hexStr[len * 2 + 1];
-  mesh::Utils::toHex(hexStr, raw, len);
+  char hexStr[s.len * 2 + 1];
+  mesh::Utils::toHex(hexStr, s.raw, s.len);
   doc["data"] = hexStr;
 
   String output;
@@ -372,12 +420,17 @@ void Observer::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
   Serial.print("[DEBUG] MQTT: data received: ");
   Serial.println(output);
 
-  uint8_t attempt_number = 0;
-  bool success = false;
-  // Allows retries in case of failure
-  while (!success) {
-    success = (mqttClient.publish(topic, output.c_str(), false) || attempt_number++ >= MAX_RETRIES);
+  // Single attempt. The old retry loop re-entered a call that can still block on
+  // the SEND_OK wait (bounded by the W5100S retransmission settings), which
+  // multiplied the stall instead of avoiding it.
+  if (!mqttClient.publish(topic, output.c_str(), false)) {
+    n_publish_errors++;
   }
+
+  // Dequeue either way, so one unpublishable sample cannot wedge the queue.
+  _q_tail = (_q_tail + 1) % OBSERVER_QUEUE_LEN;
+  _q_count--;
+  return true;
 }
 
 void Observer::loop() {
@@ -400,6 +453,11 @@ void Observer::loop() {
     }
   } else {
     mqttClient.loop();
+
+    // Drain at most ONE queued sample per pass. socketSend() can block for a
+    // long time on a degraded link, so draining the whole ring in one pass
+    // would reintroduce exactly the stall this queue exists to avoid.
+    publishNext();
   }
 }
 

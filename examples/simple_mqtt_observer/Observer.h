@@ -11,6 +11,24 @@
 #include <Utils.h>
 #include <stdlib.h>
 
+// Depth of the deferred publish ring (see RxSample below). Each slot costs
+// sizeof(RxSample) (~268 B). 8 slots covers roughly 10-15 s of broker outage at
+// SF8/BW62.5 max-packet rates; beyond that the oldest samples are dropped, which
+// is the right trade for an observer - fresh data matters more than a backlog.
+#ifndef OBSERVER_QUEUE_LEN
+#define OBSERVER_QUEUE_LEN 8
+#endif
+
+// Worst-case bytes PubSubClient hands the socket in one write():
+//   fixed header (<=5) + 2-byte topic length + topic (<=128) + payload.
+// Payload worst case is a 255-byte packet: 510 hex chars, plus the 32-char pub
+// key, a 31-char node name, timestamp/rssi/snr/length and JSON punctuation -
+// about 710 B. The W5100S socket TX buffer is 2048 B (SSIZE), so waiting for
+// this much free space is satisfiable rather than a deadlock.
+#ifndef OBSERVER_MAX_WIRE_LEN
+#define OBSERVER_MAX_WIRE_LEN 1024
+#endif
+
 struct MQTTConfig { // TODO : refactor for ObserverConfig
   /*
   Config detailing Ethernet settings. Currently supports IPv4-type addresses.
@@ -44,6 +62,32 @@ class Observer : public MyMesh {
   unsigned long last_ntp_attempt;
 
   bool ntp_done;
+
+  // Packets dropped because publish() failed (broker unreachable at send time).
+  uint32_t n_publish_errors;
+  // Packets dropped because the ring was full (outage longer than it covers).
+  uint32_t n_queue_drops;
+
+  // --- Deferred publish queue -------------------------------------------------
+  // logRxRaw() is called from Dispatcher::checkRecv(). Publishing from there is
+  // unsafe: EthernetClass::socketSend() spins with NO timeout, first waiting for
+  // W5100S TX-buffer space and then for SEND_OK. A hung broker or a stalled TCP
+  // connection therefore freezes the whole mesh node - no packet reception, no
+  // TX servicing, no watchdog petting - until TCP tears the socket down, which
+  // is seconds under RTO backoff. yield() does not run the MeshCore loop.
+  //
+  // So logRxRaw() only copies the sample into this fixed ring, and loop() does
+  // the blocking work. Statically sized: no allocation on the receive path.
+  struct RxSample {
+    uint32_t timestamp;
+    float rssi;
+    float snr;
+    uint16_t len;
+    uint8_t raw[MAX_TRANS_UNIT];
+  };
+
+  RxSample _queue[OBSERVER_QUEUE_LEN];
+  uint8_t _q_head, _q_tail, _q_count;
 
   // PubSubClient takes a plain C function pointer for its callback, so we keep a single static pointer to
   // the live instance to route messages back to it.
@@ -96,4 +140,8 @@ private:
   /* Creates JSON status messages, containing last successful connection timestamp, node name and current
    * availability */
   String getStatusMessage(bool online);
+
+  /* Serialise and publish at most one queued sample. Called from loop(), where blocking on the
+   * socket is acceptable. Returns true if a sample was dequeued (whether or not it published). */
+  bool publishNext();
 };
