@@ -29,6 +29,12 @@
 #define OBSERVER_MAX_WIRE_LEN 1024
 #endif
 
+// Max serialised JSON payload, from the same derivation as above (~710 B worst
+// case). snprintf() truncates rather than overruns if that estimate is ever off.
+#ifndef OBSERVER_JSON_MAX
+#define OBSERVER_JSON_MAX 800
+#endif
+
 struct MQTTConfig { // TODO : refactor for ObserverConfig
   /*
   Config detailing Ethernet settings. Currently supports IPv4-type addresses.
@@ -89,6 +95,10 @@ class Observer : public MyMesh {
   RxSample _queue[OBSERVER_QUEUE_LEN];
   uint8_t _q_head, _q_tail, _q_count;
 
+  // Scratch buffer for the serialised payload. Single-threaded, reused per
+  // publish, so the send path allocates nothing.
+  char _json[OBSERVER_JSON_MAX];
+
   // PubSubClient takes a plain C function pointer for its callback, so we keep a single static pointer to
   // the live instance to route messages back to it.
   static Observer *instance;
@@ -138,8 +148,13 @@ private:
   void reloadMQTT();
 
   /* Creates JSON status messages, containing last successful connection timestamp, node name and current
-   * availability */
-  String getStatusMessage(bool online);
+   * availability. Writes into a caller-supplied buffer - no Arduino String, so no heap. */
+  void getStatusMessage(bool online, char *out, size_t out_size);
+
+  /* Serialise one queued sample as JSON into `out`. Built with snprintf rather than a JSON
+   * document: the payload is a fixed flat shape, so a DOM buys nothing and costs the heap.
+   * Returns bytes written, excluding the NUL. */
+  size_t formatSample(const RxSample &s, char *out, size_t out_size);
 
   /* Serialise and publish at most one queued sample. Called from loop(), where blocking on the
    * socket is acceptable. Returns true if a sample was dequeued (whether or not it published). */

@@ -359,6 +359,57 @@ void Observer::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
   _q_count++;
 }
 
+// Escape a string for embedding in a JSON string literal: the two characters
+// that would break the document, plus anything non-printable. ArduinoJson did
+// this implicitly; snprintf does not, and node_name is operator-supplied and
+// validated nowhere upstream. The existing "Needs sanitization: control
+// caracters make it fail to connect and/or mangles messages" note in
+// connectMQTT() is the same problem seen from the other end.
+// Buffer size needed to hold node_name once escaped. Worst case is every byte
+// expanding to \uXXXX (6 chars), plus the NUL.
+static constexpr size_t NAME_ESCAPED_MAX = sizeof(NodePrefs::node_name) * 6 + 1;
+
+static size_t jsonEscape(const char *src, char *dst, size_t dst_size) {
+  size_t o = 0;
+  for (const char *p = src; *p && o + 7 < dst_size; p++) {
+    unsigned char c = (unsigned char)*p;
+    if (c == '"' || c == '\\') {
+      dst[o++] = '\\';
+      dst[o++] = c;
+    } else if (c >= 0x20 && c < 0x7F) {
+      dst[o++] = c;
+    } else {
+      o += snprintf(dst + o, dst_size - o, "\\u%04x", c);
+    }
+  }
+  dst[o] = '\0';
+  return o;
+}
+
+size_t Observer::formatSample(const RxSample &s, char *out, size_t out_size) {
+  char pub_key_string[33];
+  mesh::Utils::toHex(pub_key_string, self_id.pub_key, 16);
+  // Full 16-byte public key of the observer node.
+
+  char name_escaped[NAME_ESCAPED_MAX];
+  jsonEscape(getNodePrefs()->node_name, name_escaped, sizeof(name_escaped));
+
+  // Fixed 511-byte scratch (MAX_TRANS_UNIT * 2 + 1). Was a variable-length array
+  // sized from the packet, which put up to 511 bytes on the stack per call.
+  static char hexStr[MAX_TRANS_UNIT * 2 + 1];
+  // TODO: base64 is more compact
+  mesh::Utils::toHex(hexStr, s.raw, s.len);
+
+  int n = snprintf(out, out_size,
+                   "{\"timestamp\":%lu,\"gateway\":\"%s\",\"pub_key\":\"%s\","
+                   "\"rssi\":%.1f,\"snr\":%.2f,\"length\":%u,\"data\":\"%s\"}",
+                   (unsigned long)s.timestamp, name_escaped, pub_key_string, (double)s.rssi,
+                   (double)s.snr, (unsigned)s.len, hexStr);
+
+  if (n < 0) return 0;
+  return (size_t)n >= out_size ? out_size - 1 : (size_t)n; // snprintf truncates, never overruns
+}
+
 bool Observer::publishNext() {
   if (_q_count == 0) return false;
 
@@ -372,9 +423,9 @@ bool Observer::publishNext() {
   //
   // Checked against the worst-case frame rather than this sample's actual size:
   // knowing the actual size would mean serialising first, and a blocked socket
-  // would then burn a full hex-encode + JSON build + String allocation on every
-  // loop() pass only to discard it. Being slightly conservative costs nothing -
-  // the sample stays queued either way.
+  // would then burn a full hex-encode plus format pass on every loop() iteration
+  // only to discard it. Being slightly conservative costs nothing - the sample
+  // stays queued either way.
   if ((size_t)ethClient.availableForWrite() < OBSERVER_MAX_WIRE_LEN) {
     return false; // no room, or socket not writable: retry next pass
   }
@@ -393,37 +444,15 @@ bool Observer::publishNext() {
   // TODO add Band into topic
   // TODO add Datarate into topic
 
-  StaticJsonDocument<512> doc;
-  /* Node info */
-  doc["timestamp"] = s.timestamp;
-  doc["gateway"] = getNodePrefs()->node_name;
-
-  char pub_key_string[33];
-  mesh::Utils::toHex(pub_key_string, pub_key, 16);
-  doc["pub_key"] = pub_key_string;
-  // Full 16-bytes public key of the observer node.
-
-  /* Link info */
-  doc["rssi"] = s.rssi;
-  doc["snr"] = s.snr;
-
-  /* Message info*/
-  doc["length"] = s.len;
-  // TODO: base64 is more compact
-  char hexStr[s.len * 2 + 1];
-  mesh::Utils::toHex(hexStr, s.raw, s.len);
-  doc["data"] = hexStr;
-
-  String output;
-  serializeJson(doc, output);
+  size_t n = formatSample(s, _json, sizeof(_json));
 
   Serial.print("[DEBUG] MQTT: data received: ");
-  Serial.println(output);
+  Serial.println(_json);
 
   // Single attempt. The old retry loop re-entered a call that can still block on
   // the SEND_OK wait (bounded by the W5100S retransmission settings), which
   // multiplied the stall instead of avoiding it.
-  if (!mqttClient.publish(topic, output.c_str(), false)) {
+  if (n == 0 || !mqttClient.publish(topic, _json, false)) {
     n_publish_errors++;
   }
 
@@ -461,22 +490,16 @@ void Observer::loop() {
   }
 }
 
-String Observer::getStatusMessage(bool online) {
-  StaticJsonDocument<128> jsonData;
-
-  jsonData["timestamp"] = getRTCClock()->getCurrentTime(); // Unix epoch (set via NTP), not uptime
-  jsonData["node"] = getNodePrefs()->node_name;
-
+void Observer::getStatusMessage(bool online, char *out, size_t out_size) {
   char pub_key_string[33];
   mesh::Utils::toHex(pub_key_string, self_id.pub_key, 16);
-  jsonData["pub_key"] = pub_key_string;
 
-  jsonData["online"] = online;
+  char name_escaped[NAME_ESCAPED_MAX];
+  jsonEscape(getNodePrefs()->node_name, name_escaped, sizeof(name_escaped));
 
-  String message;
-  serializeJson(jsonData, message);
-
-  return message;
+  snprintf(out, out_size, "{\"timestamp\":%lu,\"node\":\"%s\",\"pub_key\":\"%s\",\"online\":%s}",
+           (unsigned long)getRTCClock()->getCurrentTime(), // Unix epoch (set via NTP), not uptime
+           name_escaped, pub_key_string, online ? "true" : "false");
 }
 
 bool Observer::connectMQTT() {
@@ -493,17 +516,20 @@ bool Observer::connectMQTT() {
   snprintf(willTopic, sizeof(willTopic), "%s/%08x/interruption", config.topic, observer_id);
   // Needs sanitization: control caracters make it fail to connect and/or mangles messages.
 
-  String willPayload = getStatusMessage(false);
+  char willPayload[256];
+  getStatusMessage(false, willPayload, sizeof(willPayload));
 
   if (strlen(config.username) > 0) {
-    mqttClient.connect(name, config.username, config.password, willTopic, 1, true, willPayload.c_str());
+    mqttClient.connect(name, config.username, config.password, willTopic, 1, true, willPayload);
   } else {
-    mqttClient.connect(name, willTopic, 1, true, willPayload.c_str());
+    mqttClient.connect(name, willTopic, 1, true, willPayload);
   }
 
   if (isConnected()) {
     Serial.println("[INFO] MQTT: Connection successful");
-    mqttClient.publish(willTopic, getStatusMessage(true).c_str(), true);
+    char onlinePayload[256];
+    getStatusMessage(true, onlinePayload, sizeof(onlinePayload));
+    mqttClient.publish(willTopic, onlinePayload, true);
 
 #if ENABLE_COMMANDS == 1
 
