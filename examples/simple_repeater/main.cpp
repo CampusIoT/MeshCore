@@ -16,7 +16,13 @@
 StdRNG fast_rng;
 SimpleMeshTables tables;
 
+#if defined(ETHERNET_ENABLED) && defined(MQTT_OBSERVER)
+#include "../simple_mqtt_observer/Observer.h"
+Observer *Observer::instance = nullptr;
+Observer the_mesh(board, radio_driver, *new ArduinoMillis(), fast_rng, rtc_clock, tables);
+#else
 MyMesh the_mesh(board, radio_driver, *new ArduinoMillis(), fast_rng, rtc_clock, tables);
+#endif
 
 void halt() {
   while (1) ;
@@ -102,7 +108,10 @@ void setup() {
   ethernet_command[0] = 0;
 #endif
 
+#if !(defined(MQTT_OBSERVER) && defined(ETHERNET_ENABLED))
+  // Disabled when using Ethernet on an Observer as it causes issues with serial pins.
   sensors.begin();
+#endif
 
   the_mesh.begin(fs);
 
