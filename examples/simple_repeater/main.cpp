@@ -33,6 +33,14 @@ static char command[160];
 static char ethernet_command[160];
 #endif
 
+#if defined(ETHERNET_ENABLED) && defined(MQTT_OBSERVER)
+// Owned here, not in EthernetCLI.h: the Ethernet task starts asynchronously and
+// reads this after setup() has returned, so it must outlive the call. Keeping it
+// at file scope in a single .cpp avoids putting mutable state in a shared header,
+// where every including translation unit would get its own copy.
+static EthernetSettings eth_settings;
+#endif
+
 // For power saving
 unsigned long POWERSAVING_FIRSTSLEEP_SECS = 120; // The first sleep (if enabled) from boot
 
@@ -120,7 +128,23 @@ void setup() {
 #endif
 
 #ifdef ETHERNET_ENABLED
+#ifdef MQTT_OBSERVER
+  // Copy the observer's persisted network settings for the Ethernet task, which
+  // owns bring-up. the_mesh.begin() above has already loaded them; all-zero
+  // fields keep the defaults, so an unconfigured node still comes up on DHCP
+  // with a generated MAC.
+  {
+    const MQTTConfig::NetworkConfig &n = the_mesh.getNetworkConfig();
+    memcpy(eth_settings.ip, n.ip, sizeof(eth_settings.ip));
+    memcpy(eth_settings.netmask, n.netmask, sizeof(eth_settings.netmask));
+    memcpy(eth_settings.gateway, n.gateway, sizeof(eth_settings.gateway));
+    memcpy(eth_settings.dns, n.dns, sizeof(eth_settings.dns));
+    memcpy(eth_settings.mac, n.mac, sizeof(eth_settings.mac));
+  }
+  ethernet_start_task(&eth_settings);
+#else
   ethernet_start_task();
+#endif
 #endif
 
   // send out initial zero hop Advertisement to the mesh

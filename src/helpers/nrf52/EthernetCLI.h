@@ -31,9 +31,32 @@ static EthernetServer ethernet_server(ETHERNET_TCP_PORT);
 static EthernetClient ethernet_client;
 static volatile bool ethernet_running = false;
 
+// Optional static network configuration, passed to ethernet_start_task().
+//
+// This is a type, not storage: the caller owns the instance and must keep it
+// alive for the lifetime of the task, which starts asynchronously. Passing NULL
+// (the default) reproduces the previous behaviour exactly - DHCP, with a MAC
+// from generateEthernetMac(). Any all-zero field means "unset" and keeps its
+// default, so a zero IP selects DHCP.
+struct EthernetSettings {
+  uint8_t ip[4];
+  uint8_t netmask[4];
+  uint8_t gateway[4];
+  uint8_t dns[4];
+  uint8_t mac[6];
+};
+
+static bool eth_all_zero(const uint8_t* p, size_t n) {
+  for (size_t i = 0; i < n; i++) {
+    if (p[i] != 0) return false;
+  }
+  return true;
+}
+
 // FreeRTOS task: handles hw init, DHCP, and retries in the background
 static void ethernet_task(void* param) {
-  (void)param;
+  const EthernetSettings* cfg = (const EthernetSettings*)param;
+  const bool use_dhcp = (cfg == NULL) || eth_all_zero(cfg->ip, 4);
 
   Serial.println("ETH: Initializing hardware");
   // WB_IO2 (power enable) is already driven HIGH by early constructor
@@ -47,9 +70,41 @@ static void ethernet_task(void* param) {
   Ethernet.init(ETHERNET_SPI_PORT, PIN_ETHERNET_SS);
 
   uint8_t mac[6];
-  generateEthernetMac(mac);
+  if (cfg == NULL || eth_all_zero(cfg->mac, 6)) {
+    generateEthernetMac(mac);
+  } else {
+    memcpy(mac, cfg->mac, 6);
+  }
   Serial.printf("ETH: MAC: %02X:%02X:%02X:%02X:%02X:%02X\n",
       mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+
+  if (!use_dhcp) {
+    // Static configuration: nothing to negotiate, so no retry loop. Unset
+    // fields fall back to conventional defaults derived from the address.
+    IPAddress ip(cfg->ip);
+    IPAddress mask = eth_all_zero(cfg->netmask, 4) ? IPAddress(255, 255, 255, 0)
+                                                   : IPAddress(cfg->netmask);
+    IPAddress gw = eth_all_zero(cfg->gateway, 4) ? ip : IPAddress(cfg->gateway);
+    IPAddress dns = eth_all_zero(cfg->dns, 4) ? gw : IPAddress(cfg->dns);
+
+    Ethernet.begin(mac, ip, dns, gw, mask);
+
+    if (Ethernet.hardwareStatus() == EthernetNoHardware) {
+      Serial.println("ETH: Hardware not found, giving up");
+      vTaskDelete(NULL);
+      return;
+    }
+    if (Ethernet.linkStatus() == LinkOFF) {
+      // Not fatal: a static address is valid the moment the cable is plugged in.
+      Serial.println("ETH: Cable not connected (static config applied anyway)");
+    }
+    Serial.printf("ETH: static IP: %u.%u.%u.%u\n", ip[0], ip[1], ip[2], ip[3]);
+    Serial.printf("ETH: Listening on TCP port %d\n", ETHERNET_TCP_PORT);
+    ethernet_server.begin();
+    ethernet_running = true;
+    vTaskDelete(NULL);
+    return;
+  }
 
   // Retry loop: keep trying until we get an IP
   while (!ethernet_running) {
@@ -80,8 +135,10 @@ static void ethernet_task(void* param) {
   vTaskDelete(NULL);
 }
 
-static void ethernet_start_task() {
-  xTaskCreate(ethernet_task, "eth_init", 1024, NULL, 1, NULL);
+// `cfg` may be NULL for DHCP. When non-NULL it must outlive the task, which
+// runs asynchronously - a pointer to a local would dangle before it is read.
+static void ethernet_start_task(const EthernetSettings* cfg = NULL) {
+  xTaskCreate(ethernet_task, "eth_init", 1024, (void*)cfg, 1, NULL);
 }
 
 // Format ethernet status into reply buffer. Returns true if command was handled.
@@ -117,6 +174,8 @@ static void ethernet_check_client() {
 static void ethernet_loop_maintain() {
   if (ethernet_running) {
     ethernet_check_client();
+    // Safe under a static configuration too: Ethernet.maintain() returns
+    // immediately when no DHCP lease exists (_dhcp is NULL).
     Ethernet.maintain();
   }
 }

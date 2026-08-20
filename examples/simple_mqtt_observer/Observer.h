@@ -118,14 +118,18 @@ public:
   void savePrefs();
   void handleCommand(uint32_t sender_timestamp, char *command, char *reply);
 
+  /* The persisted network settings, for main.cpp to hand to the Ethernet task before it
+   * starts. Bring-up is owned by ethernet_task() alone; this class only stores the config.
+   * EthernetCLI.h defines file-scope statics and must stay included by main.cpp only, so
+   * the wiring cannot live here. */
+  const MQTTConfig::NetworkConfig &getNetworkConfig() const { return config.network; }
+
 private:
   void handleMQTTMessage(char *topic, uint8_t *payload, unsigned int length);
 
   inline bool isConnected() { return mqttClient.connected(); }
   bool connectMQTT();
 
-  // Initialise the Ethernet interface from config (static IP or DHCP).
-  void beginNetwork();
 
   // Query an NTP server over UDP and set the RTC from the result. Called automatically once the network is up
   // (DHCP/static), and via the `ntpsync` command. Returns true if the clock was updated.

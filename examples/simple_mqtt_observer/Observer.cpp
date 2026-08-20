@@ -87,10 +87,6 @@ static void formatIPv4(char *buf, const uint8_t ip[4]) {
   snprintf(buf, 16, "%u.%u.%u.%u", ip[0], ip[1], ip[2], ip[3]);
 }
 
-static void formatIPv4(char *buf, const IPAddress ip) {
-  snprintf(buf, 16, "%u.%u.%u.%u", ip[0], ip[1], ip[2], ip[3]);
-}
-
 static void stripTrailingSlashes(char *s) {
   size_t n = strlen(s);
   while (n > 0 && s[n - 1] == '/') {
@@ -183,7 +179,6 @@ void Observer::begin(FILESYSTEM *fs) {
 
   loadConfig();
   delay(1000);
-  // beginNetwork(); // bring up Ethernet (DHCP or static) before connecting MQTT
 
   mqttClient = PubSubClient(config.mqttServer, config.serverPort, notifyAll, ethClient);
   //   Prefer hostname; if certificate CN/SAN does not match hostname (common when CN is an IP),
@@ -195,82 +190,6 @@ void Observer::begin(FILESYSTEM *fs) {
   mqttClient.setSocketTimeout(10); // Allow more time for TLS handshake/ops
 
   connectMQTT();
-}
-
-// Bring up the Ethernet interface. Uses a static configuration when an IP has
-// been set (any non-zero config.network.ip), otherwise falls back to DHCP. The
-// MAC is taken from config when set, otherwise derived from the node's pub key.
-void Observer::beginNetwork() {
-// One-time hardware bring-up: reset the W5100S and bind the Ethernet library
-// to the correct SPI bus + chip-select. On this board the W5100S sits on SPI1
-// (separate from the LoRa radio on SPI0), so the library's defaults (default
-// SPI + CS pin 10) are wrong and must be overridden before begin().
-#ifdef PIN_ETHERNET_RESET
-  pinMode(PIN_ETHERNET_RESET, OUTPUT);
-  digitalWrite(PIN_ETHERNET_RESET, LOW);
-  delay(50);
-  digitalWrite(PIN_ETHERNET_RESET, HIGH);
-  delay(200);
-#endif
-#if defined(ETH_SPI_PORT) && defined(PIN_ETHERNET_SS)
-  Ethernet.init(ETH_SPI_PORT, PIN_ETHERNET_SS);
-#elif defined(PIN_ETHERNET_SS)
-  Ethernet.init(PIN_ETHERNET_SS);
-#endif
-
-  uint8_t mac[6];
-  if (isAllZero(config.network.mac, 6)) {
-    mac[0] = 0x02; // locally administered, unicast
-    self_id.copyHashTo(mac + 1, 5);
-  } else {
-    memcpy(mac, config.network.mac, 6);
-  }
-
-  // Wait (bounded) for the PHY link to come up before starting DHCP. After the
-  // chip reset the link takes a moment to negotiate; without this the first DHCP
-  // DISCOVER goes out on a dead link and fails.
-  uint32_t link_start = millis();
-  while (Ethernet.linkStatus() != LinkON && millis() - link_start < 8000) {
-    delay(100);
-  }
-
-  bool dhcp = isAllZero(config.network.ip, 4);
-  bool ok = true;
-
-  if (dhcp) {
-    ok = Ethernet.begin(mac) ? true : false;
-
-  } else {
-    IPAddress ip(config.network.ip);
-    IPAddress dns = isAllZero(config.network.dns, 4) ? ip : IPAddress(config.network.dns);
-    IPAddress gw = isAllZero(config.network.gateway, 4) ? ip : IPAddress(config.network.gateway);
-    IPAddress mask = isAllZero(config.network.netmask, 4) ? IPAddress(255, 255, 255, 0)
-                                                          : IPAddress(config.network.netmask);
-    Ethernet.begin(mac, ip, dns, gw, mask);
-  }
-  // Attempts to boot Ethernet module. Defaults to self on private network range for all unset values if IP
-  // is.
-
-  if (Ethernet.hardwareStatus() == EthernetNoHardware) {
-    Serial.println(F("ERROR: Ethernet hardware not found (check RAK13800 seating / SPI1)"));
-    return;
-  }
-
-  if (!ok) {
-    Serial.print(F("INFO: Ethernet DHCP FAILED (link down or no DHCP server?)"));
-  } else {
-    char b[16];
-    formatIPv4(b, Ethernet.localIP());
-
-    Serial.printf("INFO: Ethernet %s IP: %s", dhcp ? "DHCP" : "static", b);
-  }
-  Serial.println();
-
-  EthernetLinkStatus link = Ethernet.linkStatus();
-  Serial.print(F("INFO: Ethernet link: "));
-  Serial.println(link == LinkON ? F("ON") : (link == LinkOFF ? F("OFF (check cable)") : F("unknown")));
-
-  // NTP is attempted from loop() during a 60s startup window, not here.
 }
 
 // Send a standard 48-byte NTP request to NTP_SERVER and, if a reply arrives,
@@ -796,9 +715,8 @@ void Observer::handleCommand(uint32_t sender_timestamp, char *command, char *rep
     memset(config.network.dns, 0, 4);
     memset(config.network.gateway, 0, 4);
     memset(config.network.netmask, 0, 4);
-    snprintf(reply, 160, "OK DHCP stored (active from next boot)");
+    snprintf(reply, 160, "OK DHCP - applies at next boot");
     savePrefs();
-    // beginNetwork();
     reloadMQTT();
     return;
   }
@@ -807,9 +725,8 @@ void Observer::handleCommand(uint32_t sender_timestamp, char *command, char *rep
       snprintf(reply, 160, "ERR usage: netset ip <a.b.c.d>");
       return;
     }
-    snprintf(reply, 160, "OK ip stored - NOT APPLIED: static IP unsupported, node uses DHCP");
+    snprintf(reply, 160, "OK ip set - applies at next boot");
     savePrefs();
-    // beginNetwork();
     reloadMQTT();
     return;
   }
@@ -818,9 +735,8 @@ void Observer::handleCommand(uint32_t sender_timestamp, char *command, char *rep
       snprintf(reply, 160, "ERR usage: netset mask <a.b.c.d>");
       return;
     }
-    snprintf(reply, 160, "OK mask stored - NOT APPLIED: static IP unsupported");
+    snprintf(reply, 160, "OK mask set - applies at next boot");
     savePrefs();
-    // beginNetwork();
     reloadMQTT();
     return;
   }
@@ -829,9 +745,8 @@ void Observer::handleCommand(uint32_t sender_timestamp, char *command, char *rep
       snprintf(reply, 160, "ERR usage: netset gw <a.b.c.d>");
       return;
     }
-    snprintf(reply, 160, "OK gateway stored - NOT APPLIED: static IP unsupported");
+    snprintf(reply, 160, "OK gateway set - applies at next boot");
     savePrefs();
-    // beginNetwork();
     reloadMQTT();
     return;
   }
@@ -840,9 +755,8 @@ void Observer::handleCommand(uint32_t sender_timestamp, char *command, char *rep
       snprintf(reply, 160, "ERR usage: netset dns <a.b.c.d>");
       return;
     }
-    snprintf(reply, 160, "OK dns stored - NOT APPLIED: static IP unsupported");
+    snprintf(reply, 160, "OK dns set - applies at next boot");
     savePrefs();
-    // beginNetwork();
     reloadMQTT();
     return;
   }
@@ -859,7 +773,7 @@ void Observer::handleCommand(uint32_t sender_timestamp, char *command, char *rep
       snprintf(reply, 160, "ERR usage: netset mac <aa:bb:cc:dd:ee:ff>");
       return;
     }
-    snprintf(reply, 160, "OK mac stored - NOT APPLIED: boot MAC comes from EthernetMac.h");
+    snprintf(reply, 160, "OK mac set - applies at next boot");
     savePrefs();
     return;
   }
