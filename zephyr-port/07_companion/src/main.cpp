@@ -14,13 +14,25 @@
 #include <helpers/SimpleMeshTables.h>
 #include "serial_ble_interface.h"
 #include "MyMesh.h"   /* examples/companion_radio (on the include path) */
+#ifdef DISPLAY_CLASS
+#include "zephyr_ssd1306_display.h"
+#include "UITask.h"   /* examples/companion_radio/ui-tiny;  the common companion UI */
+#endif
 
 SerialShim Serial;
 
 StdRNG fast_rng;
 SimpleMeshTables tables;
 DataStore store(InternalFS, rtc_clock);
-MyMesh the_mesh(radio_driver, fast_rng, rtc_clock, tables, store);
+#ifdef DISPLAY_CLASS
+static DISPLAY_CLASS display;                 /* ZephyrSSD1306Display (native SSD1306 + CFB) */
+static UITask ui_task(&board, &ble);          /* the common ui-tiny UITask, drawing to `display` */
+#endif
+MyMesh the_mesh(radio_driver, fast_rng, rtc_clock, tables, store
+#ifdef DISPLAY_CLASS
+              , &ui_task
+#endif
+);
 
 /* USER button (double-click -> send self-advert)
  * The XIAO nRF54L15 exposes a USER button (devicetree alias sw0 = usr_btn, active-low +
@@ -78,7 +90,16 @@ int main(void)
 	fast_rng.begin(radio_get_rng_seed());
 	if (!InternalFS.begin()) { printk("InternalFS FAILED\n"); return 0; }
 	store.begin();
-	the_mesh.begin(false);   /* no display (loads prefs from /new_prefs) */
+	the_mesh.begin(false);   /* loads prefs from /new_prefs */
+
+#ifdef DISPLAY_CLASS
+	if (display.begin()) {   /* false if no OLED is attached -> run headless, mesh unaffected */
+		ui_task.begin(&display, &sensors, the_mesh.getNodePrefs());
+		printk("OLED: SSD1306 status screen ready\n");
+	} else {
+		printk("OLED: no display on I2C -> headless\n");
+	}
+#endif
 
 	/* DEBUG: did the node name survive the last power cycle? On a cold boot this should show
 	 * the previously-set name and exists=1; if it shows the default name / exists=0 the prefs
@@ -101,6 +122,10 @@ int main(void)
 		if (user_button_double_click()) {
 			printk("USER btn: double-click -> self-advert\n");
 			the_mesh.advert();
+#ifdef DISPLAY_CLASS
+			ui_task.wake();                         /* light the screen + reset auto-off */
+			ui_task.showAlert("Advert sent", 2000);
+#endif
 		}
 
 		/* A rename from the app (CMD_SET_ADVERT_NAME) only updates prefs; push it to BLE so
@@ -123,6 +148,10 @@ int main(void)
 			last_rxstats = k_uptime_get();
 			radio_log_rx_stats();
 		}
+#endif
+
+#ifdef DISPLAY_CLASS
+		ui_task.loop();   /* render the status screen (MyMesh feeds it via the _ui hooks) */
 #endif
 
 		k_msleep(1);   /* snappy serial/radio polling for the app's frame bursts */

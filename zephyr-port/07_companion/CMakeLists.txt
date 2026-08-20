@@ -1,5 +1,16 @@
 # Step 4e — full MeshCore companion (companion_radio MyMesh) on the Zephyr seams.
 cmake_minimum_required(VERSION 3.20.0)
+
+# OLED status screen (-DOLED=ON): 128x64 SSD1306 on the XIAO I2C. The devicetree node + display
+# Kconfig live in oled.overlay / oled.conf and must be added BEFORE find_package(Zephyr); the C++
+# side (DISPLAY_CLASS + ui-tiny UITask) is wired after it. Reuses the common ui-tiny UITask via a
+# Zephyr-native DisplayDriver (src/zephyr_ssd1306_display.cpp) — no Arduino Wire/Adafruit.
+option(OLED "SSD1306 OLED status screen (ui-tiny UITask)" OFF)
+if(OLED)
+  list(APPEND EXTRA_DTC_OVERLAY_FILE "${CMAKE_CURRENT_SOURCE_DIR}/oled.overlay")
+  list(APPEND EXTRA_CONF_FILE        "${CMAKE_CURRENT_SOURCE_DIR}/oled.conf")
+endif()
+
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(mc_zephyr_companion)
 
@@ -94,6 +105,18 @@ if(LR2021_MULTISF)
     target_compile_definitions(app PRIVATE LR2021_MULTISF_DEBUG=1)
   endif()
   message(STATUS "MeshCore: LR2021 multi-SF receive enabled")
+endif()
+
+# OLED status screen (see the option() above for the DT/Kconfig half). Reuse the common ui-tiny
+# UITask, backed by the Zephyr-native SSD1306 DisplayDriver. DISPLAY_CLASS also switches on the
+# _ui hooks already present in MyMesh (notify/newMsg/msgRead/setHasConnection).
+if(OLED)
+  # The full common ui-tiny UITask, drawing to the Zephyr-native SSD1306 DisplayDriver.
+  target_compile_definitions(app PRIVATE DISPLAY_CLASS=ZephyrSSD1306Display AUTO_OFF_MILLIS=0)
+  target_sources(app PRIVATE
+    src/zephyr_ssd1306_display.cpp src/cfb_font_0608.c ${CR}/ui-tiny/UITask.cpp)
+  target_include_directories(app PRIVATE ${CR}/ui-tiny)
+  message(STATUS "MeshCore: SSD1306 OLED status screen enabled (ui-tiny + 6x8 CFB font)")
 endif()
 
 # Standalone side-detector A/B + diagnostic harness (bypasses the mesh). See ABTEST.md.

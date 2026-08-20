@@ -166,11 +166,11 @@ public:
       display.setColor(DisplayDriver::YELLOW);
       display.setTextSize(2);
       sprintf(tmp, "MSG: %d", _task->getMsgCount());
-      display.setCursor(0, 10);
+      // display.setCursor(0, 26);   // two 8px lines below the status bar (was y=10)
       display.print(tmp);
 
       sprintf(tmp, "BATT: %.2fV", _task->getCachedBattMV() / 1000.0f);
-      display.setCursor(0, 19);
+      // display.setCursor(0, 35);   // keep the original 9px gap under MSG (was y=19)
       display.print(tmp);
 
       #ifdef WIFI_SSID
@@ -468,6 +468,14 @@ void UITask::showAlert(const char* text, int duration_millis) {
   _alert_expiry = millis() + duration_millis;
 }
 
+void UITask::wake() {
+  if (_display == NULL) return;
+  if (!_display->isOn()) _display->turnOn();
+  _auto_off = millis() + AUTO_OFF_MILLIS;   // reset the idle timer (button == user activity)
+  _next_refresh = 100;
+  gotoHomeScreen();
+}
+
 void UITask::notify(UIEventType t) {
 #if defined(PIN_BUZZER)
 switch(t){
@@ -502,6 +510,11 @@ void UITask::msgRead(int msgcount) {
   _msgcount = msgcount;
   if (msgcount == 0) {
     gotoHomeScreen();
+  }
+  // Refresh promptly so the MSG counter reflects the message just read/synced, rather than
+  // waiting for the periodic 5s redraw. (newMsg already does this on the increment side.)
+  if (_display != NULL && _display->isOn()) {
+    _next_refresh = 100;
   }
 }
 
@@ -668,19 +681,24 @@ void UITask::loop() {
   if (curr) curr->poll();
 
   if (_display != NULL && _display->isOn()) {
+    // The boot splash is a full-screen branding frame (logo at 0,0); don't scroll the
+    // status bar over it. Show the bar only once we've left the splash screen.
+    bool show_status = (curr != splash);
+    if (show_status) {
         _statusBar.update(*_display,
         _node_prefs->node_name,
         _cached_batt_mv,
         isBuzzerQuiet(),
         getGPSState(),
         isSerialEnabled());
+    }
 
-    bool status_dirty = _statusBar.needsRedraw();
+    bool status_dirty = show_status && _statusBar.needsRedraw();
     bool content_dirty = (millis() >= _next_refresh && curr);
 
     if (status_dirty || content_dirty) {
       _display->startFrame();
-      _statusBar.render(*_display);
+      if (show_status) _statusBar.render(*_display);
 
       if (curr) {
         int delay_millis = curr->render(*_display);

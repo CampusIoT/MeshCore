@@ -1,0 +1,29 @@
+/*
+ * OLED status screen for the XIAO nRF54L15 + LR2021 companion.
+ * Pulled in only for `west build -- -DOLED=ON` (see CMakeLists.txt). A 128x64 SSD1306 on the
+ * XIAO expansion I2C bus (xiao_i2c = i2c22, addr 0x3c). The companion drives it via Zephyr's
+ * native SSD1306 driver + Character Framebuffer (src/zephyr_ssd1306_display.cpp).
+ */
+&i2c22 {
+	status = "okay";
+
+	ssd1306: ssd1306@3c {
+		compatible = "solomon,ssd1306";
+		reg = <0x3c>;
+		width = <128>;
+		height = <64>;
+		segment-offset = <0>;
+		page-offset = <0>;
+		display-offset = <0>;
+		multiplex-ratio = <63>;
+		segment-remap;
+		com-invdir;
+		prechargep = <0x22>;
+	};
+};
+
+/ {
+	chosen {
+		zephyr,display = &ssd1306;
+	};
+};
