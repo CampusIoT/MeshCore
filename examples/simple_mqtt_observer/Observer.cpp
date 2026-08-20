@@ -138,12 +138,24 @@ static void stripTrailingSlashes(char *s) {
 #define MAX_RETRIES 5
 #endif
 
+// Per-packet serial tracing. Off by default: this fires for every received
+// packet, and printing the full JSON costs real time on a deployed node. The
+// per-event messages (connect, command, NTP) are always on - they are rare.
+#ifndef OBSERVER_DEBUG_LOGGING
+#define OBSERVER_DEBUG_LOGGING 0
+#endif
+
 Observer::Observer(mesh::MainBoard &board, mesh::Radio &radio, mesh::MillisecondClock &ms, mesh::RNG &rng,
                    mesh::RTCClock &rtc, mesh::MeshTables &tables)
     : MyMesh(board, radio, ms, rng, rtc, tables) {
 
   memset(&config, 0, sizeof(config));
   last_reconnect_attempt = 0;
+  // Both are read in loop() before anything writes them. `the_mesh` is a global,
+  // so static zero-initialisation covers it today - but that is an accident of
+  // where the object lives, not a property of the class.
+  last_ntp_attempt = 0;
+  ntp_done = false;
   n_publish_errors = 0;
   n_queue_drops = 0;
   _q_head = _q_tail = _q_count = 0;
@@ -440,20 +452,26 @@ bool Observer::publishNext() {
   //   id: 33 22 11 00
 
   char topic[128];
-  snprintf(topic, sizeof(topic), "%s/%08x/raw", config.topic, observer_id);
+  snprintf(topic, sizeof(topic), "%s/%08lx/raw", config.topic, (unsigned long)observer_id);
   // TODO add Band into topic
   // TODO add Datarate into topic
 
   size_t n = formatSample(s, _json, sizeof(_json));
 
-  Serial.print("[DEBUG] MQTT: data received: ");
+#if OBSERVER_DEBUG_LOGGING
+  Serial.print("[DEBUG] MQTT: publishing: ");
   Serial.println(_json);
+#endif
 
   // Single attempt. The old retry loop re-entered a call that can still block on
   // the SEND_OK wait (bounded by the W5100S retransmission settings), which
   // multiplied the stall instead of avoiding it.
   if (n == 0 || !mqttClient.publish(topic, _json, false)) {
     n_publish_errors++;
+#if OBSERVER_DEBUG_LOGGING
+    Serial.print("[WARN] MQTT: publish failed, state=");
+    Serial.println(mqttClient.state());
+#endif
   }
 
   // Dequeue either way, so one unpublishable sample cannot wedge the queue.
@@ -513,7 +531,7 @@ bool Observer::connectMQTT() {
   memcpy(&observer_id, self_id.pub_key, sizeof(observer_id));
 
   char willTopic[128];
-  snprintf(willTopic, sizeof(willTopic), "%s/%08x/interruption", config.topic, observer_id);
+  snprintf(willTopic, sizeof(willTopic), "%s/%08lx/interruption", config.topic, (unsigned long)observer_id);
   // Needs sanitization: control caracters make it fail to connect and/or mangles messages.
 
   char willPayload[256];
@@ -695,8 +713,21 @@ void Observer::handleCommand(uint32_t sender_timestamp, char *command, char *rep
 
   // MQTT config
   if (matchCmd(command, "mqttget") != NULL) {
-    snprintf(reply, 160, "mqtt host=%s port=%u user=%s topic=%s auth=%s", config.mqttServer,
-             config.serverPort, config.username, config.topic, strlen(config.username) > 0 ? "yes" : "no");
+    // Includes live state so a deployed node can be diagnosed over the CLI
+    // without a debug build. puberr vs qdrop distinguishes "the broker rejected
+    // the send" from "the outage outlasted the queue" - different problems.
+    // `user` is dropped in favour of auth=yes/no: reply is only 160 bytes and
+    // was already at risk of truncation (-Wformat-truncation).
+    // host/topic are bounded explicitly: reply is 160 bytes and the fixed text
+    // plus counters already takes ~98, so an unbounded host would push the tail
+    // out and silently drop puberr/qdrop - the two fields worth reading. Better
+    // to abbreviate the host than to lose the counters.
+    snprintf(reply, 160,
+             "mqtt host=%.36s:%u topic=%.24s auth=%s conn=%s state=%d q=%u/%u puberr=%lu qdrop=%lu",
+             config.mqttServer, config.serverPort, config.topic,
+             strlen(config.username) > 0 ? "yes" : "no", isConnected() ? "up" : "down",
+             mqttClient.state(), (unsigned)_q_count, (unsigned)OBSERVER_QUEUE_LEN,
+             (unsigned long)n_publish_errors, (unsigned long)n_queue_drops);
     return;
   }
   if ((arg = matchCmd(command, "mqttset host")) != NULL) {
@@ -765,7 +796,7 @@ void Observer::handleCommand(uint32_t sender_timestamp, char *command, char *rep
     memset(config.network.dns, 0, 4);
     memset(config.network.gateway, 0, 4);
     memset(config.network.netmask, 0, 4);
-    snprintf(reply, 160, "OK DHCP, re-acquiring lease...");
+    snprintf(reply, 160, "OK DHCP stored (active from next boot)");
     savePrefs();
     // beginNetwork();
     reloadMQTT();
@@ -776,7 +807,7 @@ void Observer::handleCommand(uint32_t sender_timestamp, char *command, char *rep
       snprintf(reply, 160, "ERR usage: netset ip <a.b.c.d>");
       return;
     }
-    snprintf(reply, 160, "OK ip set, re-applying network...");
+    snprintf(reply, 160, "OK ip stored - NOT APPLIED: static IP unsupported, node uses DHCP");
     savePrefs();
     // beginNetwork();
     reloadMQTT();
@@ -787,7 +818,7 @@ void Observer::handleCommand(uint32_t sender_timestamp, char *command, char *rep
       snprintf(reply, 160, "ERR usage: netset mask <a.b.c.d>");
       return;
     }
-    snprintf(reply, 160, "OK mask set");
+    snprintf(reply, 160, "OK mask stored - NOT APPLIED: static IP unsupported");
     savePrefs();
     // beginNetwork();
     reloadMQTT();
@@ -798,7 +829,7 @@ void Observer::handleCommand(uint32_t sender_timestamp, char *command, char *rep
       snprintf(reply, 160, "ERR usage: netset gw <a.b.c.d>");
       return;
     }
-    snprintf(reply, 160, "OK gateway set");
+    snprintf(reply, 160, "OK gateway stored - NOT APPLIED: static IP unsupported");
     savePrefs();
     // beginNetwork();
     reloadMQTT();
@@ -809,7 +840,7 @@ void Observer::handleCommand(uint32_t sender_timestamp, char *command, char *rep
       snprintf(reply, 160, "ERR usage: netset dns <a.b.c.d>");
       return;
     }
-    snprintf(reply, 160, "OK dns set");
+    snprintf(reply, 160, "OK dns stored - NOT APPLIED: static IP unsupported");
     savePrefs();
     // beginNetwork();
     reloadMQTT();
@@ -828,7 +859,7 @@ void Observer::handleCommand(uint32_t sender_timestamp, char *command, char *rep
       snprintf(reply, 160, "ERR usage: netset mac <aa:bb:cc:dd:ee:ff>");
       return;
     }
-    snprintf(reply, 160, "OK mac set (applies on next boot)");
+    snprintf(reply, 160, "OK mac stored - NOT APPLIED: boot MAC comes from EthernetMac.h");
     savePrefs();
     return;
   }
