@@ -35,6 +35,18 @@
 #define OBSERVER_JSON_MAX 800
 #endif
 
+// Reconnect backoff. A broker that refuses us - wrong credentials, an ACL that
+// denies the will topic - fails identically every time, so retrying hard buys
+// nothing and costs a console line per attempt. Start at 5 s and double up to
+// a minute; a transient outage still recovers quickly, a misconfiguration stops
+// drowning every other message on the CLI.
+#ifndef MQTT_RECONNECT_MIN_MS
+#define MQTT_RECONNECT_MIN_MS 5000
+#endif
+#ifndef MQTT_RECONNECT_MAX_MS
+#define MQTT_RECONNECT_MAX_MS 60000
+#endif
+
 struct MQTTConfig { // TODO : refactor for ObserverConfig
   /*
   Config detailing Ethernet settings. Currently supports IPv4-type addresses.
@@ -66,6 +78,19 @@ class Observer : public MyMesh {
   PubSubClient mqttClient;
   unsigned long last_reconnect_attempt;
   unsigned long last_ntp_attempt;
+
+  // Current backoff between reconnect attempts, in ms. Grows on failure, resets
+  // on a successful connect or on a config change via `mqttset`.
+  unsigned long reconnect_interval;
+
+  // millis() when an address first appeared, 0 while the link is still coming
+  // up. Anchors the NTP window to link-up rather than to boot.
+  unsigned long link_up_at;
+
+  // Last connection-failure state already printed, so an unchanged failure is
+  // reported once rather than on every retry. Seeded to MQTT_CONNECTED so the
+  // first real failure always prints.
+  int last_logged_mqtt_state;
 
   bool ntp_done;
 

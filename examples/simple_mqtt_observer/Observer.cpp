@@ -147,6 +147,9 @@ Observer::Observer(mesh::MainBoard &board, mesh::Radio &radio, mesh::Millisecond
 
   memset(&config, 0, sizeof(config));
   last_reconnect_attempt = 0;
+  reconnect_interval = MQTT_RECONNECT_MIN_MS;
+  last_logged_mqtt_state = MQTT_CONNECTED;
+  link_up_at = 0;
   // Both are read in loop() before anything writes them. `the_mesh` is a global,
   // so static zero-initialisation covers it today - but that is an accident of
   // where the object lives, not a property of the class.
@@ -180,16 +183,30 @@ void Observer::begin(FILESYSTEM *fs) {
   loadConfig();
   delay(1000);
 
-  mqttClient = PubSubClient(config.mqttServer, config.serverPort, notifyAll, ethClient);
-  //   Prefer hostname; if certificate CN/SAN does not match hostname (common when CN is an IP),
-  //   we'll retry with the resolved IP address inside connectMQTT().
+  // Configure in place, never by assigning a temporary. PubSubClient owns a
+  // malloc'd buffer and frees it in its destructor, but declares neither a copy
+  // constructor nor an operator=, so `mqttClient = PubSubClient(...)` copies the
+  // temporary's buffer pointer member-wise and then frees it when the temporary
+  // dies. mqttClient is left holding a dangling pointer, and the setBufferSize()
+  // below realloc()s it - which in newlib-nano frees the same block a second
+  // time, closing the free list into a cycle. The next malloc (the MQTT connect
+  // path, or xTaskCreate() for the Ethernet task) then spins forever.
+  //
+  // setServer() stores the pointer without copying, which is safe here:
+  // config.mqttServer is a member array and outlives the client.
+  mqttClient.setClient(ethClient);
+  mqttClient.setServer(config.mqttServer, config.serverPort);
+  mqttClient.setCallback(notifyAll);
 
   mqttClient.setBufferSize(2048); // Allow larger JSON payloads
   //  Improve connection robustness
   mqttClient.setKeepAlive(60);     // Increase keepalive to 60s
   mqttClient.setSocketTimeout(10); // Allow more time for TLS handshake/ops
 
-  connectMQTT();
+  // No connectMQTT() here. main.cpp calls this before ethernet_start_task(), so
+  // neither ETHERNET_SPI_PORT.begin() nor Ethernet.init() has run yet: the
+  // W5100S is uninitialised, socketBegin() bails on getChip() == 0, and the
+  // connect can only fail. loop() retries every 5 s once the link is up.
 }
 
 // Send a standard 48-byte NTP request to NTP_SERVER and, if a reply arrives,
@@ -403,19 +420,55 @@ void Observer::loop() {
   MyMesh::loop();
 
   unsigned long now = millis();
-  // NTP: keep trying during the first 60s of uptime, every 5s, until it
-  // succeeds. Once it works (or the window closes) leave the clock alone.
+
+  // Nothing below works without an address, and Ethernet bring-up is asynchronous:
+  // ethernet_task() is still probing the controller and negotiating DHCP while
+  // loop() already runs. After a soft `reboot` that stretch is much longer than
+  // after a power-on - chip detection soft-resets the W5100S, so the PHY has to
+  // renegotiate from scratch and the first DHCP attempt can time out and wait out
+  // its 30 s retry.
+  //
+  // Treat that as "not started yet", never as a run of failures. Otherwise the
+  // pre-link attempts inflate the MQTT backoff - leaving the observer idle for up
+  // to another minute after the address finally arrives - and they burn the whole
+  // NTP window, so the node ends up online with an unset clock. That is exactly
+  // the difference the operator sees between a power cycle and a `reboot`.
+  //
+  // hardwareStatus() only returns a cached chip id and never touches SPI, so it
+  // is safe before the controller is initialised; localIP() is not, hence the
+  // order. Polling at the reconnect cadence keeps that SPI read off the hot path.
+  if (link_up_at == 0) {
+    if (now - last_reconnect_attempt <= MQTT_RECONNECT_MIN_MS) return;
+    last_reconnect_attempt = now;
+    if (Ethernet.hardwareStatus() == EthernetNoHardware ||
+        Ethernet.localIP() == IPAddress(0, 0, 0, 0)) {
+      last_ntp_attempt = now;
+      reconnect_interval = MQTT_RECONNECT_MIN_MS;
+      return;
+    }
+    link_up_at = now;
+  }
+
+  // NTP: keep trying for the first 60s after the link came up, every 5s, until
+  // it succeeds. Once it works (or the window closes) leave the clock alone.
   if (!ntp_done) {
     if (now - last_ntp_attempt > 5000) {
       last_ntp_attempt = now;
-      ntp_done = (now > 60000UL || syncTimeFromNTP());
+      ntp_done = (now - link_up_at > 60000UL || syncTimeFromNTP());
     }
   }
 
   // Handle MQTT reconnection
   if (!isConnected()) {
-    if (now - last_reconnect_attempt > 5000) {
-      last_reconnect_attempt = connectMQTT() ? now : 0;
+    if (now - last_reconnect_attempt > reconnect_interval) {
+      // Stamp the attempt unconditionally. Setting this to 0 on failure - as it
+      // used to - made `now - 0 > interval` true on the very next pass, so a
+      // refusing broker was retried every loop iteration instead of every 5 s.
+      last_reconnect_attempt = now;
+      if (!connectMQTT() && reconnect_interval < MQTT_RECONNECT_MAX_MS) {
+        reconnect_interval *= 2;
+        if (reconnect_interval > MQTT_RECONNECT_MAX_MS) reconnect_interval = MQTT_RECONNECT_MAX_MS;
+      }
     }
   } else {
     mqttClient.loop();
@@ -464,6 +517,10 @@ bool Observer::connectMQTT() {
 
   if (isConnected()) {
     Serial.println("[INFO] MQTT: Connection successful");
+    // Back to a fast retry, and re-arm failure logging so a later drop is
+    // reported instead of being swallowed as a repeat.
+    reconnect_interval = MQTT_RECONNECT_MIN_MS;
+    last_logged_mqtt_state = MQTT_CONNECTED;
     char onlinePayload[256];
     getStatusMessage(true, onlinePayload, sizeof(onlinePayload));
     mqttClient.publish(willTopic, onlinePayload, true);
@@ -494,8 +551,15 @@ bool Observer::connectMQTT() {
 #endif
 
   } else {
-    Serial.print("[ERR] MQTT: connection failed, state=");
-    Serial.println(mqttClient.state());
+    // Report each distinct failure once. A broker that refuses us keeps
+    // returning the same state, and repeating the line every retry buries the
+    // CLI output. `mqttget` always shows the live state on demand.
+    int state = mqttClient.state();
+    if (state != last_logged_mqtt_state) {
+      Serial.print("[ERR] MQTT: connection failed, state=");
+      Serial.println(state);
+      last_logged_mqtt_state = state;
+    }
   }
 
   return isConnected();
@@ -785,6 +849,11 @@ void Observer::reloadMQTT() {
   mqttClient.disconnect();
 
   mqttClient.setServer(config.mqttServer, config.serverPort);
+
+  // The operator just changed the config, so give it a clean slate: retry fast
+  // again, and let the next failure print even if it repeats the previous one.
+  reconnect_interval = MQTT_RECONNECT_MIN_MS;
+  last_logged_mqtt_state = MQTT_CONNECTED;
 
   connectMQTT();
 }
