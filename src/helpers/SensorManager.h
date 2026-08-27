@@ -24,6 +24,17 @@ public:
   virtual bool setSettingValue(const char* name, const char* value) { return false; }
   virtual LocationProvider* getLocationProvider() { return NULL; }
 
+  // Runtime I2C introspection. Detection normally runs once at boot, so without these the
+  // only evidence a device was found is a MESH_DEBUG line no release build prints.
+  // Managers with no I2C bus keep the defaults and the CLI reports "not supported".
+  virtual bool rescanSensors() { return false; }          // re-scan the bus AND re-init drivers
+  virtual int getNumDetectedSensors() const { return 0; }
+  virtual const char* getDetectedSensorName(int i) const { return NULL; }
+  virtual uint8_t getDetectedSensorAddress(int i) const { return 0; }
+  virtual uint8_t getDetectedSensorChannel(int i) const { return 0; }
+  // every address that ACKed, including ones no driver claimed. Returns the count.
+  virtual int getBusAddresses(uint8_t dest[], int max_n) const { return 0; }
+
   // Helper functions to manage setting by keys (useful in many places ...)
   const char* getSettingByKey(const char* key) {
     int num = getNumSettings();

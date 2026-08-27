@@ -7,20 +7,21 @@
 #include <helpers/radiolib/CustomLR1110Wrapper.h>
 #include <helpers/ArduinoHelpers.h>
 #include <helpers/SensorManager.h>
+#include <helpers/sensors/EnvironmentSensorManager.h>
 #include <helpers/sensors/LocationProvider.h>
 #ifdef DISPLAY_CLASS
   #include "NullDisplayDriver.h"
 #endif
 
-class T1000SensorManager: public SensorManager {
-  bool gps_active = false;
-  LocationProvider * _nmea;
-
+// Derives from EnvironmentSensorManager for the external I2C sensor detection only. The GPS is
+// NOT the generic one: the T1000-E needs its own power sequence over GPS_EN/GPS_VRTC_EN/
+// GPS_RESET/GPS_SLEEP_INT, so begin() and loop() deliberately bypass the base implementations.
+class T1000SensorManager: public EnvironmentSensorManager {
   void start_gps();
   void sleep_gps();
   void stop_gps();
 public:
-  T1000SensorManager(LocationProvider &nmea): _nmea(&nmea) { }
+  T1000SensorManager(LocationProvider &nmea): EnvironmentSensorManager(nmea) { }
   bool begin() override;
   bool querySensors(uint8_t requester_permissions, CayenneLPP& telemetry) override;
   void loop() override;
@@ -28,7 +29,6 @@ public:
   const char* getSettingName(int i) const override;
   const char* getSettingValue(int i) const override;
   bool setSettingValue(const char* name, const char* value) override;
-  LocationProvider* getLocationProvider() { return _nmea; }
 };
 
 #ifdef DISPLAY_CLASS

@@ -32,7 +32,7 @@
 // Buttons
 #define PIN_BUTTON1             (13)
 #define PIN_BUTTON2             (20)
-#define PIN_USER_BTN            PIN_BUTTON1
+#define PIN_USER_BTN            PIN_BUTTON2   // physical user button is on P0.20, not PIN_BUTTON1
 
 #define VBAT_ENABLE             (19)    // Output LOW to enable reading of the BAT voltage.
 

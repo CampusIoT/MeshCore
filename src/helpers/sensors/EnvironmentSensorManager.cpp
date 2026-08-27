@@ -621,6 +621,14 @@ bool EnvironmentSensorManager::begin() {
   #endif
   #endif
 
+  initI2CSensors();
+
+  return true;
+}
+
+// Split out of begin() so a variant SensorManager that brings up its own GPS (T1000-E)
+// can reuse the detection without inheriting initBasicGPS()'s pin handling.
+void EnvironmentSensorManager::initI2CSensors() {
   #if ENV_PIN_SDA && ENV_PIN_SCL
     #ifdef NRF52_PLATFORM
   Wire1.setPins(ENV_PIN_SDA, ENV_PIN_SCL);
@@ -635,6 +643,14 @@ bool EnvironmentSensorManager::begin() {
   // Scan the I2C bus before touching any sensor library.
   bool detected[128] = {};
   scanI2CBus(TELEM_WIRE, detected);
+
+  // Retain the raw result: an address that ACKs but matches no table entry (an on-board
+  // accelerometer, say) would otherwise leave no trace at all, making a populated bus
+  // indistinguishable from a dead one.
+  memset(_bus_seen, 0, sizeof(_bus_seen));
+  for (int a = 0; a < 128; a++) {
+    if (detected[a]) _bus_seen[a >> 3] |= (uint8_t)(1 << (a & 7));
+  }
 
   // Walk the sensor table and initialize only detected devices.
   _active_sensor_count = 0;
@@ -651,11 +667,46 @@ bool EnvironmentSensorManager::begin() {
     }
     MESH_DEBUG_PRINTLN("Found %s at address: %02X", def.name, def.address);
     for (uint8_t sub = 0; sub < n && _active_sensor_count < MAX_ACTIVE_SENSORS; sub++) {
-      _active_sensors[_active_sensor_count++] = { def.query, sub };
+      _active_sensors[_active_sensor_count++] = { def.query, sub, def.name, def.address };
     }
   }
+}
 
+// scan the bus again and re-initialise the drivers,
+// so a device attached after boot becomes usable without a reboot. Safe to call from the CLI
+// because every querySensors() call site runs on the same loop as command handling, this
+// cannot be preempted midway through rebuilding _active_sensors[].
+bool EnvironmentSensorManager::rescanSensors() {
+  initI2CSensors();
   return true;
+}
+
+const char* EnvironmentSensorManager::getDetectedSensorName(int i) const {
+  if (i < 0 || i >= _active_sensor_count) return NULL;
+  return _active_sensors[i].name;
+}
+
+uint8_t EnvironmentSensorManager::getDetectedSensorAddress(int i) const {
+  if (i < 0 || i >= _active_sensor_count) return 0;
+  return _active_sensors[i].address;
+}
+
+// Mirrors the assignment queryI2CSensors() makes: one channel each, in table order,
+// starting just above the channel the node reserves for itself.
+uint8_t EnvironmentSensorManager::getDetectedSensorChannel(int i) const {
+  if (i < 0 || i >= _active_sensor_count) return 0;
+  return (uint8_t)(TELEM_CHANNEL_SELF + 1 + i);
+}
+
+int EnvironmentSensorManager::getBusAddresses(uint8_t dest[], int max_n) const {
+  int n = 0;
+  for (int a = 0; a < 128; a++) {
+    if (_bus_seen[a >> 3] & (1 << (a & 7))) {
+      if (dest && n < max_n) dest[n] = (uint8_t)a;
+      n++;
+    }
+  }
+  return n;
 }
 
 // ============================================================
@@ -665,22 +716,27 @@ bool EnvironmentSensorManager::begin() {
 // ============================================================
 
 bool EnvironmentSensorManager::querySensors(uint8_t requester_permissions, CayenneLPP& telemetry) {
-  next_available_channel = TELEM_CHANNEL_SELF + 1;
-
   if (requester_permissions & TELEM_PERM_LOCATION && gps_active) {
     telemetry.addGPS(TELEM_CHANNEL_SELF, node_lat, node_lon, node_altitude);
   }
 
   if (requester_permissions & TELEM_PERM_ENVIRONMENT) {
-    for (int i = 0; i < _active_sensor_count; i++) {
-      _active_sensors[i].query(next_available_channel, _active_sensors[i].sub_channel, telemetry);
-      next_available_channel++;
-    }
+    queryI2CSensors(telemetry);
   }
 
   return true;
 }
 
+// Detected I2C sensors get one telemetry channel each, starting above TELEM_CHANNEL_SELF so a
+// variant's on-board sensors can keep TELEM_CHANNEL_SELF for themselves.
+void EnvironmentSensorManager::queryI2CSensors(CayenneLPP& telemetry) {
+  next_available_channel = TELEM_CHANNEL_SELF + 1;
+
+  for (int i = 0; i < _active_sensor_count; i++) {
+    _active_sensors[i].query(next_available_channel, _active_sensors[i].sub_channel, telemetry);
+    next_available_channel++;
+  }
+}
 
 int EnvironmentSensorManager::getNumSettings() const {
   int settings = 0;
@@ -732,7 +788,9 @@ bool EnvironmentSensorManager::setSettingValue(const char* name, const char* val
 #if ENV_INCLUDE_GPS
 void EnvironmentSensorManager::initBasicGPS() {
 
-  Serial1.setPins(PIN_GPS_TX, PIN_GPS_RX);
+  #if defined(PIN_GPS_TX) && defined(PIN_GPS_RX)
+  Serial1.setPins(PIN_GPS_TX, PIN_GPS_RX);   // otherwise Serial1 keeps the variant's default pins
+  #endif
 
   #ifdef GPS_BAUD_RATE
   Serial1.begin(GPS_BAUD_RATE);

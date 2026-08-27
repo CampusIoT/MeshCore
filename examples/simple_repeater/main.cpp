@@ -23,20 +23,45 @@ static char command[160];
 unsigned long POWERSAVING_FIRSTSLEEP_SECS = 120; // The first sleep (if enabled) from boot
 
 #if defined(PIN_USER_BTN) && defined(_SEEED_SENSECAP_SOLAR_H_)
-static unsigned long userBtnDownAt = 0;
+#include <helpers/ui/MomentaryButton.h>
 #define USER_BTN_HOLD_OFF_MILLIS 1500
+// Active-LOW button on the internal pull-up, so reverse=true and pulldownup=true.
+// Multi-click detection is on by default; check() cancels pending clicks if the press
+// turns into a long press, so hold-to-power-off and double-click can't both fire.
+static MomentaryButton user_btn(PIN_USER_BTN, USER_BTN_HOLD_OFF_MILLIS, true, true);
+// MomentaryButton polls digitalRead(); the pin has no GPIOTE interrupt, so a press cannot wake
+// the CPU out of sd_app_evt_wait(). Keep the loop spinning briefly around any button activity
+// or powersaving mode will sample too slowly to ever see the 280ms double-click window.
+static unsigned long btn_active_until = 0;
+static bool btn_was_pressed = false;
 #endif
 
 void setup() {
   Serial.begin(115200);
+
+#if defined(MESH_DEBUG) && defined(NRF52_PLATFORM)
+  // Wait for the USB CDC host to actually open the port, BEFORE board.begin(), that is where
+  // the power-management diagnostics (reset reason, shutdown reason, boot voltage) are printed.
+  // After a reboot the host has not finished re-enumerating yet.
+  #ifndef MESH_DEBUG_BOOT_WAIT_MS
+    #define MESH_DEBUG_BOOT_WAIT_MS 20000
+  #endif
+  {
+    unsigned long t0 = millis();
+    while (!Serial && (millis() - t0) < MESH_DEBUG_BOOT_WAIT_MS) delay(10);
+    delay(5000);   // let the terminal settle once it has opened the port
+  }
+#endif
+
   delay(1000);
 
   board.begin();
 
-#if defined(MESH_DEBUG) && defined(NRF52_PLATFORM)
-  // give some extra time for serial to settle so
-  // boot debug messages can be seen on terminal
-  delay(5000);
+#if defined(PIN_USER_BTN) && defined(_SEEED_SENSECAP_SOLAR_H_)
+  user_btn.begin();
+  // Boot marker: confirms which pin the button is bound to and its idle level.
+  // For an active-LOW button on a pull-up, idle must read 1.
+  Serial.printf("btn: user=pin%d idle=%d\n", PIN_USER_BTN, digitalRead(PIN_USER_BTN));
 #endif
 
 #ifdef DISPLAY_CLASS
@@ -134,17 +159,33 @@ void loop() {
   }
 
 #if defined(PIN_USER_BTN) && defined(_SEEED_SENSECAP_SOLAR_H_)
-  // Hold the user button to power off the SenseCAP Solar repeater.
-  int btnState = digitalRead(PIN_USER_BTN);
-  if (btnState == LOW) {
-    if (userBtnDownAt == 0) {
-      userBtnDownAt = millis();
-    } else if ((unsigned long)(millis() - userBtnDownAt) >= USER_BTN_HOLD_OFF_MILLIS) {
+  // Double-click sends an advert; hold powers the SenseCAP Solar repeater off.
+  int btn_ev = user_btn.check();
+
+  // Diagnostics, printed unconditionally (not behind MESH_DEBUG) so they show in any build.
+  // Edge-triggered: isPressed() is a level, so logging it directly floods while held.
+  bool btn_pressed_now = user_btn.isPressed();
+  if (btn_pressed_now != btn_was_pressed) {
+    btn_was_pressed = btn_pressed_now;
+    btn_active_until = millis() + 1000;
+    // Serial.printf("btn: %s\n", btn_pressed_now ? "DOWN" : "UP");
+  }
+  if (btn_ev != BUTTON_EVENT_NONE) {
+    btn_active_until = millis() + 1000;
+    // Serial.printf("btn: event=%d (1=click 2=long 3=DOUBLE 4=triple)\n", btn_ev);
+  }
+
+  switch (btn_ev) {
+    case BUTTON_EVENT_DOUBLE_CLICK:
+      Serial.println("Sending advert...");
+      the_mesh.sendSelfAdvertisement(1500, true);   // flood, same as the "advert" CLI command
+      break;
+    case BUTTON_EVENT_LONG_PRESS:
       Serial.println("Powering off...");
       board.powerOff();  // does not return
-    }
-  } else {
-    userBtnDownAt = 0;
+      break;
+    default:
+      break;
   }
 #endif
 
@@ -155,7 +196,11 @@ void loop() {
 #endif
   rtc_clock.tick();
 
-  if (the_mesh.getNodePrefs()->powersaving_enabled && !the_mesh.hasPendingWork()) {
+  bool btn_busy = false;
+#if defined(PIN_USER_BTN) && defined(_SEEED_SENSECAP_SOLAR_H_)
+  btn_busy = (btn_active_until != 0) && !the_mesh.millisHasNowPassed(btn_active_until);
+#endif
+  if (the_mesh.getNodePrefs()->powersaving_enabled && !the_mesh.hasPendingWork() && !btn_busy) {
 #if defined(NRF52_PLATFORM)
     board.sleep(0); // nrf ignores seconds param, sleeps whenever possible
 #else

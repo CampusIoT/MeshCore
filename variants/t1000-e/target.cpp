@@ -131,6 +131,9 @@ void T1000SensorManager::stop_gps() {
 bool T1000SensorManager::begin() {
   // init GPS
   Serial1.begin(115200);
+  // external I2C sensors on the board's Wire bus (P0.26/P0.27, already begun by T1000eBoard).
+  // Not EnvironmentSensorManager::begin(), that would run the generic GPS bring-up over the T1000-E's own power sequence.
+  initI2CSensors();
   return true;
 }
 
@@ -142,6 +145,7 @@ bool T1000SensorManager::querySensors(uint8_t requester_permissions, CayenneLPP&
     // Firmware reports light as a 0-100 % scale, but expose it via Luminosity so app labels it "Luminosity".
     telemetry.addLuminosity(TELEM_CHANNEL_SELF, t1000e_get_light());
     telemetry.addTemperature(TELEM_CHANNEL_SELF, t1000e_get_temperature());
+    queryI2CSensors(telemetry);   // on channels above TELEM_CHANNEL_SELF
   }
   return true;
 }
@@ -149,13 +153,13 @@ bool T1000SensorManager::querySensors(uint8_t requester_permissions, CayenneLPP&
 void T1000SensorManager::loop() {
   static long next_gps_update = 0;
 
-  _nmea->loop();
+  _location->loop();
 
   if (millis() > next_gps_update) {
-    if (gps_active && _nmea->isValid()) {
-      node_lat = ((double)_nmea->getLatitude())/1000000.;
-      node_lon = ((double)_nmea->getLongitude())/1000000.;
-      node_altitude = ((double)_nmea->getAltitude()) / 1000.0;
+    if (gps_active && _location->isValid()) {
+      node_lat = ((double)_location->getLatitude())/1000000.;
+      node_lon = ((double)_location->getLongitude())/1000000.;
+      node_altitude = ((double)_location->getAltitude()) / 1000.0;
       //Serial.printf("lat %f lon %f\r\n", _lat, _lon);
     }
     next_gps_update = millis() + 1000;

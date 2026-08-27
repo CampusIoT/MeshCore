@@ -350,6 +350,43 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, char* command, char* re
           *(dp-1) = 0; // remove last CR
         }
       }
+    } else if (memcmp(command, "sensor scan", 11) == 0) {
+      // re-run bus scan + driver init, so a device attached after boot becomes usable
+      // without a reboot (detection otherwise happens once, at startup)
+      if (_sensors->rescanSensors()) {
+        sprintf(reply, "%d sensors, %d on bus",
+          _sensors->getNumDetectedSensors(), _sensors->getBusAddresses(NULL, 0));
+      } else {
+        strcpy(reply, "rescan not supported");
+      }
+    } else if (memcmp(command, "sensor detected", 15) == 0) {
+      uint8_t addrs[32];
+      int n_bus = _sensors->getBusAddresses(addrs, 32);
+      int end = _sensors->getNumDetectedSensors();
+      int start = (strlen(command) > 15) ? _atoi(command + 16) : 0;
+      if (end == 0 && n_bus == 0) {
+        strcpy(reply, "no I2C devices");
+      } else {
+        char* dp = reply;
+        sprintf(dp, "%d sensors, %d on bus\n", end, n_bus);
+        dp = strchr(dp, 0);
+        int i;
+        for (i = start; i < end && (dp - reply < 110); i++) {
+          sprintf(dp, "ch%d %s %02X\n", _sensors->getDetectedSensorChannel(i),
+            _sensors->getDetectedSensorName(i), _sensors->getDetectedSensorAddress(i));
+          dp = strchr(dp, 0);
+        }
+        if (i < end) {
+          sprintf(dp, "... next:%d", i);
+        } else {           // all sensors listed -- append every address that ACKed
+          sprintf(dp, "bus:");
+          dp = strchr(dp, 0);
+          for (int j = 0; j < n_bus && (dp - reply < 150); j++) {
+            sprintf(dp, " %02X", addrs[j]);
+            dp = strchr(dp, 0);
+          }
+        }
+      }
     } else if (memcmp(command, "region", 6) == 0) {
       handleRegionCmd(command, reply);
 #if ENV_INCLUDE_GPS == 1
