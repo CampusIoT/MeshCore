@@ -120,7 +120,10 @@ void setup() {
   ui_task.begin(the_mesh.getNodePrefs(), FIRMWARE_BUILD_DATE, FIRMWARE_VERSION);
 #endif
 
-  // send out initial zero hop Advertisement to the mesh
+  // send out initial zero hop Advertisement to the mesh.
+  // Under the 'share' policy this deliberately goes out with 0,0: node_lat/node_lon are still
+  // zero at boot, so this advert announces "we are online" and the position follows separately
+  // once GPS acquires a fix (see the first-fix handler in loop()).
 #if ENABLE_ADVERT_ON_BOOT == 1
   the_mesh.sendSelfAdvertisement(16000, false);
 #endif
@@ -191,6 +194,19 @@ void loop() {
 
   the_mesh.loop();
   sensors.loop();
+
+#if ENV_INCLUDE_GPS == 1
+  // First fix since boot: persist it and tell the mesh straight away. Latched consume-once, so
+  // this is at most one flash write and one flood advert per boot -- the rate limit is structural.
+  if (sensors.takeFirstFixEvent()) {
+    NodePrefs* p = the_mesh.getNodePrefs();
+    p->node_lat = sensors.node_lat;
+    p->node_lon = sensors.node_lon;
+    the_mesh.savePrefs();
+    Serial.printf("GPS: first fix %.6f, %.6f - saved, advertising\n", p->node_lat, p->node_lon);
+    the_mesh.sendSelfAdvertisement(1500, true);   // flood: discovery/position propagation
+  }
+#endif
 #ifdef DISPLAY_CLASS
   ui_task.loop();
 #endif

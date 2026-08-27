@@ -30,6 +30,8 @@ protected:
 
   bool     gps_detected = false;
   bool     gps_active = false;
+  bool     _had_first_fix = false;    // latched for the lifetime of this boot
+  bool     _first_fix_event = false;  // consumed by takeFirstFixEvent()
   uint32_t gps_update_interval_sec = 1;
 
   #if ENV_INCLUDE_GPS
@@ -54,6 +56,7 @@ public:
   bool querySensors(uint8_t requester_permissions, CayenneLPP& telemetry) override;
 
   bool rescanSensors() override;
+  bool takeFirstFixEvent() override;
   int getNumDetectedSensors() const override { return _active_sensor_count; }
   const char* getDetectedSensorName(int i) const override;
   uint8_t getDetectedSensorAddress(int i) const override;

@@ -2,6 +2,13 @@
 
 #include <Wire.h>
 
+// Minimum satellites before a fix is considered good enough to publish. MicroNMEA's isValid()
+// applies no quality requirement at all, so without this a 3-satellite fix triggers the first
+// position advert. 0 = accept any valid fix (the historical behaviour).
+#ifndef GPS_MIN_SATS_FOR_FIX
+#define GPS_MIN_SATS_FOR_FIX 0
+#endif
+
 #if ENV_PIN_SDA && ENV_PIN_SCL
 #define TELEM_WIRE &Wire1  // Use Wire1 as the I2C bus for Environment Sensors
 #else
@@ -681,6 +688,13 @@ bool EnvironmentSensorManager::rescanSensors() {
   return true;
 }
 
+// Consume-once, so the caller reacts exactly once per boot.
+bool EnvironmentSensorManager::takeFirstFixEvent() {
+  if (!_first_fix_event) return false;
+  _first_fix_event = false;
+  return true;
+}
+
 const char* EnvironmentSensorManager::getDetectedSensorName(int i) const {
   if (i < 0 || i >= _active_sensor_count) return NULL;
   return _active_sensors[i].name;
@@ -971,6 +985,18 @@ void EnvironmentSensorManager::loop() {
       MESH_DEBUG_PRINTLN("lat %f lon %f alt %f", node_lat, node_lon, node_altitude);
     }
     #endif
+    }
+    // Latch the transition into "position known". Nothing else in the pipeline reacts to a fix
+    // arriving, so without this the mesh only learns the position at the next scheduled advert.
+    //
+    // isValid() is only "the receiver has a fix" -- MicroNMEA sets it from the NMEA sentence and
+    // applies no quality requirement, so a 3-4 satellite fix satisfies it. Requiring a minimum
+    // satellite count here holds the first advert back until the position is worth publishing.
+    // 0 disables the check (the historical behaviour), so other boards are unaffected.
+    if (gps_active && !_had_first_fix && _location->isValid()
+        && _location->satellitesCount() >= GPS_MIN_SATS_FOR_FIX) {
+      _had_first_fix = true;
+      _first_fix_event = true;
     }
     next_gps_update = millis() + (gps_update_interval_sec * 1000);
   }

@@ -28,6 +28,10 @@ public:
   // only evidence a device was found is a MESH_DEBUG line no release build prints.
   // Managers with no I2C bus keep the defaults and the CLI reports "not supported".
   virtual bool rescanSensors() { return false; }          // re-scan the bus AND re-init drivers
+
+  // Latched "GPS just became valid for the first time since boot". Consume-once: returns true
+  // exactly once, so the caller can react (advertise / persist) without re-firing every loop.
+  virtual bool takeFirstFixEvent() { return false; }
   virtual int getNumDetectedSensors() const { return 0; }
   virtual const char* getDetectedSensorName(int i) const { return NULL; }
   virtual uint8_t getDetectedSensorAddress(int i) const { return 0; }
