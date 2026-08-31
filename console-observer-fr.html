@@ -1,0 +1,953 @@
+<title>Console Observer RAK4631</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+
+<style>
+  :root {
+    --ground:   #EEF1F4;
+    --surface:  #FFFFFF;
+    --raised:   #E3E8ED;
+    --ink:      #121820;
+    --ink-soft: #33404D;
+    --muted:    #5A6B7B;
+    --line:     #D3DAE1;
+    --line-soft:#E4E9EE;
+    --accent:   #0E6B7C;
+    --accent-bg:#DCEBEE;
+    --caution:  #9A4C18;
+    --caution-bg:#F4E5D8;
+    --code-bg:  #E7ECF0;
+
+    --f-display: "IBM Plex Sans Condensed", "Helvetica Neue", Arial, sans-serif;
+    --f-body: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+    --f-mono: "IBM Plex Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+
+    --shell: 1180px;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:   #0E1318;
+      --surface:  #161D25;
+      --raised:   #1E272F;
+      --ink:      #DFE6EC;
+      --ink-soft: #B6C2CC;
+      --muted:    #8798A6;
+      --line:     #27313B;
+      --line-soft:#1E262E;
+      --accent:   #48B3C6;
+      --accent-bg:#122A30;
+      --caution:  #DD9257;
+      --caution-bg:#2C1F14;
+      --code-bg:  #1B242C;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground:   #0E1318;
+    --surface:  #161D25;
+    --raised:   #1E272F;
+    --ink:      #DFE6EC;
+    --ink-soft: #B6C2CC;
+    --muted:    #8798A6;
+    --line:     #27313B;
+    --line-soft:#1E262E;
+    --accent:   #48B3C6;
+    --accent-bg:#122A30;
+    --caution:  #DD9257;
+    --caution-bg:#2C1F14;
+    --code-bg:  #1B242C;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--f-body);
+    font-size: 15px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .shell {
+    max-width: var(--shell);
+    margin: 0 auto;
+    padding: 0 24px 96px;
+    display: grid;
+    grid-template-columns: 208px minmax(0, 1fr);
+    gap: 48px;
+    align-items: start;
+  }
+
+  /* ---- masthead ---- */
+
+  .masthead {
+    grid-column: 1 / -1;
+    border-bottom: 2px solid var(--ink);
+    padding: 56px 0 22px;
+    margin-bottom: 40px;
+  }
+
+  .eyebrow {
+    font-family: var(--f-mono);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 14px;
+  }
+
+  h1 {
+    font-family: var(--f-display);
+    font-weight: 700;
+    font-size: clamp(34px, 6vw, 52px);
+    line-height: 1.02;
+    letter-spacing: -0.015em;
+    margin: 0 0 16px;
+    text-wrap: balance;
+  }
+
+  .standfirst {
+    max-width: 62ch;
+    color: var(--ink-soft);
+    margin: 0;
+    font-size: 16px;
+  }
+
+  .buildstrip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0 28px;
+    margin-top: 24px;
+    font-family: var(--f-mono);
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .buildstrip b {
+    color: var(--ink);
+    font-weight: 500;
+  }
+
+  /* ---- nav rail ---- */
+
+  nav {
+    position: sticky;
+    top: 24px;
+    font-size: 13px;
+    line-height: 1.45;
+  }
+  nav p {
+    font-family: var(--f-mono);
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 10px;
+  }
+  nav ol {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  nav a {
+    display: block;
+    padding: 3px 0 3px 11px;
+    border-left: 2px solid var(--line);
+    color: var(--ink-soft);
+    text-decoration: none;
+  }
+  nav a:hover, nav a:focus-visible {
+    border-left-color: var(--accent);
+    color: var(--accent);
+  }
+
+  /* ---- sections ---- */
+
+  main { min-width: 0; }
+
+  section { margin-bottom: 52px; scroll-margin-top: 24px; }
+
+  h2 {
+    font-family: var(--f-display);
+    font-weight: 700;
+    font-size: 25px;
+    letter-spacing: -0.005em;
+    margin: 0 0 6px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--line);
+    text-wrap: balance;
+  }
+
+  h3 {
+    font-family: var(--f-display);
+    font-weight: 600;
+    font-size: 17px;
+    margin: 30px 0 8px;
+    color: var(--ink);
+  }
+
+  p { max-width: 68ch; }
+  section > p:first-of-type { margin-top: 12px; }
+
+  a { color: var(--accent); }
+
+  code, .cmd {
+    font-family: var(--f-mono);
+    font-size: 0.88em;
+    background: var(--code-bg);
+    padding: 1px 5px;
+    border-radius: 2px;
+    white-space: nowrap;
+  }
+
+  /* ---- tables ---- */
+
+  .scroller {
+    overflow-x: auto;
+    margin: 16px 0 0;
+    border: 1px solid var(--line);
+    background: var(--surface);
+  }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    min-width: 620px;
+    font-size: 14px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  thead th {
+    font-family: var(--f-mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    text-align: left;
+    color: var(--muted);
+    background: var(--raised);
+    padding: 9px 14px;
+    border-bottom: 1px solid var(--line);
+    white-space: nowrap;
+  }
+
+  tbody td {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--line-soft);
+    vertical-align: top;
+    color: var(--ink-soft);
+  }
+  tbody tr:last-child td { border-bottom: 0; }
+
+  td.c {
+    font-family: var(--f-mono);
+    font-size: 13px;
+    color: var(--ink);
+    white-space: nowrap;
+    font-weight: 500;
+  }
+  td.c span { white-space: nowrap; }
+  td.d { min-width: 240px; }
+
+  /* ---- badges ---- */
+
+  .tag {
+    display: inline-block;
+    font-family: var(--f-mono);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 1px 6px;
+    border-radius: 2px;
+    white-space: nowrap;
+    vertical-align: 1px;
+  }
+  .tag-local {
+    color: var(--caution);
+    background: var(--caution-bg);
+    border: 1px solid var(--caution);
+  }
+  .tag-boot {
+    color: var(--accent);
+    background: var(--accent-bg);
+    border: 1px solid var(--accent);
+  }
+
+  /* ---- callouts ---- */
+
+  .note {
+    border-left: 3px solid var(--accent);
+    background: var(--surface);
+    padding: 14px 18px;
+    margin: 20px 0 0;
+  }
+  .note.warn { border-left-color: var(--caution); }
+  .note p { margin: 0; max-width: 64ch; }
+  .note p + p { margin-top: 9px; }
+  .note strong { color: var(--ink); }
+
+  /* ---- channel cards ---- */
+
+  .channels {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+    gap: 16px;
+    margin-top: 20px;
+  }
+  .channel {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-top: 3px solid var(--accent);
+    padding: 16px 18px;
+  }
+  .channel h4 {
+    font-family: var(--f-display);
+    font-size: 15px;
+    font-weight: 600;
+    margin: 0 0 4px;
+  }
+  .channel .addr {
+    font-family: var(--f-mono);
+    font-size: 13px;
+    color: var(--accent);
+    display: block;
+    margin-bottom: 8px;
+    word-break: break-all;
+    white-space: normal;
+  }
+  .channel p {
+    margin: 0;
+    font-size: 13px;
+    color: var(--muted);
+    line-height: 1.5;
+  }
+
+  pre {
+    font-family: var(--f-mono);
+    font-size: 13px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 13px 16px;
+    overflow-x: auto;
+    margin: 16px 0 0;
+    line-height: 1.55;
+    color: var(--ink);
+  }
+
+  footer {
+    grid-column: 1 / -1;
+    border-top: 1px solid var(--line);
+    padding-top: 18px;
+    font-size: 13px;
+    color: var(--muted);
+    max-width: 68ch;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+
+  @media (max-width: 900px) {
+    .shell {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 0;
+      padding: 0 20px 72px;
+    }
+    nav {
+      position: static;
+      margin-bottom: 40px;
+      padding-bottom: 24px;
+      border-bottom: 1px solid var(--line);
+    }
+    nav ol {
+      flex-direction: row;
+      flex-wrap: wrap;
+      gap: 6px 4px;
+    }
+    nav a {
+      border-left: 0;
+      border: 1px solid var(--line);
+      padding: 3px 9px;
+    }
+    .masthead { padding-top: 40px; }
+  }
+</style>
+
+<div class="shell">
+
+  <header class="masthead">
+    <p class="eyebrow">MeshCore v1.17.1 &middot; RAK_4631_observer_ethernet</p>
+    <h1>Console Observer RAK4631</h1>
+    <p class="standfirst">
+      Toutes les commandes disponibles sur ce build : le jeu du répéteur, plus celles
+      propres à l'observer MQTT et à l'interface Ethernet. Les commandes absentes de ce
+      firmware ne figurent pas ici — sauf en dernière section, qui dit précisément
+      lesquelles et pourquoi.
+    </p>
+    <div class="buildstrip">
+      <span>Radio <b>SX1262 &middot; 869.618 MHz &middot; BW 62.5 &middot; SF 8 &middot; CR 5</b></span>
+      <span>TX <b>22 dBm</b></span>
+      <span>Voisins <b>100</b></span>
+    </div>
+  </header>
+
+  <nav aria-label="Sommaire">
+    <p>Sommaire</p>
+    <ol>
+      <li><a href="#acces">Accès à la console</a></li>
+      <li><a href="#observer">Observer MQTT</a></li>
+      <li><a href="#reseau">Réseau &amp; horloge</a></li>
+      <li><a href="#radio">Radio</a></li>
+      <li><a href="#diag">Diagnostic</a></li>
+      <li><a href="#voisins">Voisinage</a></li>
+      <li><a href="#routage">Routage</a></li>
+      <li><a href="#adverts">Adverts</a></li>
+      <li><a href="#identite">Identité &amp; système</a></li>
+      <li><a href="#energie">Énergie</a></li>
+      <li><a href="#regions">Régions</a></li>
+      <li><a href="#acl">ACL</a></li>
+      <li><a href="#log">Capture</a></li>
+      <li><a href="#absent">Inerte ou absent</a></li>
+      <li><a href="#flags">Flags de build</a></li>
+    </ol>
+  </nav>
+
+  <main>
+
+    <section id="acces">
+      <h2>Accès à la console</h2>
+      <p>
+        Trois canaux mènent au même interpréteur. Tous appellent
+        <code>handleCommand(0, …)</code>, donc ils acceptent exactement le même jeu de
+        commandes — y compris celles marquées <span class="tag tag-local">local</span>,
+        qui sont refusées uniquement en administration radio.
+      </p>
+
+      <div class="channels">
+        <div class="channel">
+          <h4>Série USB</h4>
+          <span class="addr">115200 bauds</span>
+          <p>Le seul canal disponible avant que le réseau soit monté. Indispensable au premier démarrage et quand le lien Ethernet est tombé.</p>
+        </div>
+        <div class="channel">
+          <h4>Telnet</h4>
+          <span class="addr">port 23</span>
+          <p>Ouvert dès que l'interface a une adresse. Une seule session à la fois : une nouvelle connexion remplace la précédente.</p>
+        </div>
+        <div class="channel">
+          <h4>MQTT</h4>
+          <span class="addr">&lt;topic&gt;/&lt;observer_id&gt;/commands</span>
+          <p>Compilé via <code>ENABLE_COMMANDS</code>. Les réponses repartent sur le topic <code>/ack</code> du même préfixe.</p>
+        </div>
+      </div>
+
+      <div class="note warn">
+        <p>
+          <strong>Aucun de ces trois canaux n'est authentifié.</strong> Le mot de passe
+          <code>ADMIN_PASSWORD</code> ne protège que le chemin d'administration radio,
+          pas le port 23 ni le topic <code>/commands</code>. Quiconque atteint le réseau
+          du nœud, ou peut publier sur ce topic, dispose de la console complète —
+          <code>erase</code> et <code>set radio</code> compris. À cloisonner par ACL de
+          broker et par segmentation réseau avant tout déploiement.
+        </p>
+      </div>
+
+      <h3>Trouver son <code>observer_id</code></h3>
+      <p>
+        C'est le préfixe de la clé publique, lu en little-endian et imprimé sur 8 chiffres
+        hex — donc <strong>les octets sont inversés</strong> par rapport à la ligne
+        <code>Repeater ID:</code> du démarrage. Le plus sûr est de lire la ligne que le
+        firmware affiche à la connexion :
+      </p>
+      <pre>[INFO] MQTT: Subscribed to: meshcore/EU_868/decbeb53/commands</pre>
+    </section>
+
+    <section id="observer">
+      <h2>Observer MQTT</h2>
+      <p>
+        Spécifiques à ce build. Chaque <code>mqttset</code> écrit la configuration puis
+        relance immédiatement la connexion — pas besoin de redémarrer.
+      </p>
+
+      <div class="scroller">
+        <table>
+          <thead>
+            <tr><th>Commande</th><th>Effet</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="c">mqttget</td>
+              <td class="d">État complet : hôte, port, topic, authentification, connexion, code d'état, remplissage de la file, compteurs <code>puberr</code> et <code>qdrop</code>. La seule source de vérité sur la config active.</td>
+            </tr>
+            <tr>
+              <td class="c">mqttset host &lt;hôte&gt;</td>
+              <td class="d">Adresse du broker. Une IP littérale court-circuite le DNS.</td>
+            </tr>
+            <tr>
+              <td class="c">mqttset port &lt;port&gt;</td>
+              <td class="d">Port TCP, 1 à 65535.</td>
+            </tr>
+            <tr>
+              <td class="c">mqttset user &lt;login&gt;</td>
+              <td class="d">Identifiant. Vide = connexion anonyme.</td>
+            </tr>
+            <tr>
+              <td class="c">mqttset pass &lt;mdp&gt;</td>
+              <td class="d">Mot de passe, stocké en clair sur le système de fichiers.</td>
+            </tr>
+            <tr>
+              <td class="c">mqttset topic &lt;racine&gt;</td>
+              <td class="d">Préfixe de topic. Les <code>/</code> finaux sont retirés.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Topics publiés</h3>
+      <div class="scroller">
+        <table>
+          <thead>
+            <tr><th>Topic</th><th>Contenu</th></tr>
+          </thead>
+          <tbody>
+            <tr><td class="c">&lt;racine&gt;/&lt;id&gt;/raw</td><td class="d">Un JSON par paquet reçu : horodatage, RSSI, SNR, longueur, trame brute en hex. Y compris les trames non-MeshCore.</td></tr>
+            <tr><td class="c">&lt;racine&gt;/&lt;id&gt;/interruption</td><td class="d">Statut en ligne / hors ligne, retenu. Sert aussi de testament (LWT).</td></tr>
+            <tr><td class="c">&lt;racine&gt;/&lt;id&gt;/commands</td><td class="d">Entrée de la console distante.</td></tr>
+            <tr><td class="c">&lt;racine&gt;/&lt;id&gt;/ack</td><td class="d">Réponses aux commandes reçues ci-dessus.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="note">
+        <p>
+          <strong>La config persistée prend le pas sur les flags de build.</strong> Dès le
+          premier <code>mqttset</code> ou <code>netset</code>, le fichier
+          <code>/observer_conf</code> est créé et relu à chaque démarrage. Modifier
+          <code>MQTT_HOST</code> dans <code>platformio.ini</code> puis reflasher n'aura alors
+          plus aucun effet visible. <code>mqttget</code> dit ce qui est réellement actif.
+        </p>
+      </div>
+
+      <h3>Codes d'état de connexion</h3>
+      <div class="scroller">
+        <table>
+          <thead>
+            <tr><th>state</th><th>Signification</th><th>Où chercher</th></tr>
+          </thead>
+          <tbody>
+            <tr><td class="c">0</td><td class="d">Connecté.</td><td class="d">—</td></tr>
+            <tr><td class="c">-1</td><td class="d">Déconnecté proprement.</td><td class="d">Suite à un <code>mqttset</code>.</td></tr>
+            <tr><td class="c">-2</td><td class="d">Échec TCP.</td><td class="d">Lien, routage, pare-feu, port. Le broker n'a jamais répondu.</td></tr>
+            <tr><td class="c">-4</td><td class="d">Délai dépassé.</td><td class="d">Broker joignable mais muet.</td></tr>
+            <tr><td class="c">4</td><td class="d">Identifiants refusés.</td><td class="d"><code>mqttset user</code> / <code>pass</code>.</td></tr>
+            <tr><td class="c">5</td><td class="d">Non autorisé.</td><td class="d">Connexion anonyme refusée, ACL sur le topic du testament, ou identifiant client rejeté.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p style="margin-top:16px">
+        Un état d'échec identique n'est journalisé qu'une fois, et les tentatives suivent
+        un backoff de 5 s à 60 s. Pour l'état en direct à tout moment :
+        <code>mqttget</code>.
+      </p>
+    </section>
+
+    <section id="reseau">
+      <h2>Réseau &amp; horloge</h2>
+      <p>
+        La montée du lien appartient à une tâche qui lit la configuration une seule fois,
+        au démarrage. Toutes les commandes <code>netset</code> ne prennent donc effet
+        qu'au redémarrage suivant.
+      </p>
+
+      <div class="scroller">
+        <table>
+          <thead>
+            <tr><th>Commande</th><th>Effet</th><th>Portée</th></tr>
+          </thead>
+          <tbody>
+            <tr><td class="c">netget</td><td class="d">Mode (DHCP ou statique), IP, masque, passerelle, DNS.</td><td class="d">Immédiat</td></tr>
+            <tr><td class="c">netset dhcp</td><td class="d">Repasse en configuration automatique.</td><td class="d"><span class="tag tag-boot">reboot</span></td></tr>
+            <tr><td class="c">netset ip &lt;a.b.c.d&gt;</td><td class="d">Adresse fixe. Une IP non nulle bascule le nœud en statique.</td><td class="d"><span class="tag tag-boot">reboot</span></td></tr>
+            <tr><td class="c">netset mask &lt;a.b.c.d&gt;</td><td class="d">Masque. Non renseigné, /24 est appliqué.</td><td class="d"><span class="tag tag-boot">reboot</span></td></tr>
+            <tr><td class="c">netset gw &lt;a.b.c.d&gt;</td><td class="d">Passerelle. Non renseignée, l'IP du nœud est reprise.</td><td class="d"><span class="tag tag-boot">reboot</span></td></tr>
+            <tr><td class="c">netset dns &lt;a.b.c.d&gt;</td><td class="d">Résolveur. Non renseigné, la passerelle est reprise.</td><td class="d"><span class="tag tag-boot">reboot</span></td></tr>
+            <tr><td class="c">netset mac &lt;aa:bb:…&gt;</td><td class="d">Adresse MAC. Non renseignée, elle est dérivée de l'identifiant de la puce.</td><td class="d"><span class="tag tag-boot">reboot</span></td></tr>
+            <tr><td class="c">eth.status</td><td class="d">IP courante et port de la console, ou <code>not connected</code>.</td><td class="d">Immédiat</td></tr>
+            <tr><td class="c">ntpsync</td><td class="d">Force une synchronisation de l'horloge. Sinon automatique dans la première minute après la montée du lien.</td><td class="d">Immédiat</td></tr>
+            <tr><td class="c">clock</td><td class="d">Heure courante en UTC.</td><td class="d">Immédiat</td></tr>
+            <tr><td class="c">clock sync</td><td class="d">Aligne l'horloge sur celle de l'appareil distant.</td><td class="d">Immédiat</td></tr>
+            <tr><td class="c">time &lt;epoch&gt;</td><td class="d">Fixe l'heure sur un timestamp Unix.</td><td class="d">Immédiat</td></tr>
+            <tr><td class="c">clkreboot</td><td class="d">Remet l'horloge à zéro et redémarre.</td><td class="d">Immédiat</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="radio">
+      <h2>Radio</h2>
+
+      <div class="scroller">
+        <table>
+          <thead>
+            <tr><th>Commande</th><th>Effet</th><th>Défaut</th></tr>
+          </thead>
+          <tbody>
+            <tr><td class="c">get radio</td><td class="d">Fréquence, bande passante, facteur d'étalement, taux de codage.</td><td class="d">869.618, 62.5, 8, 5</td></tr>
+            <tr><td class="c">set radio &lt;f&gt;,&lt;bw&gt;,&lt;sf&gt;,&lt;cr&gt;</td><td class="d">Les quatre d'un coup. <span class="tag tag-boot">reboot</span></td><td class="d">—</td></tr>
+            <tr><td class="c">get freq</td><td class="d">Fréquence seule, en MHz.</td><td class="d">869.618</td></tr>
+            <tr><td class="c">set freq &lt;MHz&gt;</td><td class="d">Fréquence seule. <span class="tag tag-local">local</span> <span class="tag tag-boot">reboot</span></td><td class="d">—</td></tr>
+            <tr><td class="c">tempradio &lt;f&gt;,&lt;bw&gt;,&lt;sf&gt;,&lt;cr&gt;,&lt;min&gt;</td><td class="d">Paramètres temporaires, non sauvegardés, restaurés seuls à l'expiration du délai.</td><td class="d">—</td></tr>
+            <tr><td class="c">get tx</td><td class="d">Puissance d'émission du SX1262.</td><td class="d">22 dBm</td></tr>
+            <tr><td class="c">set tx &lt;dBm&gt;</td><td class="d">1 à 22. Ne compte pas l'éventuel étage d'amplification externe.</td><td class="d">—</td></tr>
+            <tr><td class="c">get radio.rxgain</td><td class="d">Mode gain de réception boosté de la puce.</td><td class="d">on</td></tr>
+            <tr><td class="c">set radio.rxgain on|off</td><td class="d">—</td><td class="d">—</td></tr>
+            <tr><td class="c">get radio.fem.rxgain</td><td class="d">LNA du frontal externe, quand la carte en a un.</td><td class="d">—</td></tr>
+            <tr><td class="c">set radio.fem.rxgain on|off</td><td class="d">Distinct de <code>radio.rxgain</code>, qui est interne à la puce.</td><td class="d">—</td></tr>
+            <tr><td class="c">get radio.fem.txgain</td><td class="d">Gain d'émission du frontal externe.</td><td class="d">—</td></tr>
+            <tr><td class="c">set radio.fem.txgain on|off</td><td class="d">—</td><td class="d">—</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="note">
+        <p>
+          <strong>Sur un site distant, passer par <code>tempradio</code>.</strong> Un
+          <code>set radio</code> malheureux coupe le lien jusqu'à la prochaine visite
+          physique ; <code>tempradio</code> revient tout seul à la configuration
+          sauvegardée au bout du délai donné.
+        </p>
+        <p>
+          Les valeurs affichées ici sont celles compilées dans ce build. Les préférences
+          enregistrées les écrasent au démarrage, donc <code>get radio</code> fait foi —
+          pas <code>platformio.ini</code>.
+        </p>
+      </div>
+    </section>
+
+    <section id="diag">
+      <h2>Diagnostic</h2>
+      <p>
+        Les trois <code>stats-*</code> répondent en JSON sur une ligne. Elles sont
+        refusées en administration radio, mais disponibles sur les trois canaux locaux,
+        MQTT compris.
+      </p>
+
+      <div class="scroller">
+        <table>
+          <thead>
+            <tr><th>Commande</th><th>Sortie</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="c">stats-radio <span class="tag tag-local">local</span></td>
+              <td class="d"><code>noise_floor</code>, <code>last_rssi</code>, <code>last_snr</code>, <code>tx_air_secs</code>, <code>rx_air_secs</code>. Le plancher de bruit est le chiffre à surveiller sur un point haut : au-delà de −110 dBm environ, une source locale mange la sensibilité.</td>
+            </tr>
+            <tr>
+              <td class="c">stats-packets <span class="tag tag-local">local</span></td>
+              <td class="d"><code>recv</code>, <code>sent</code>, <code>flood_tx</code>, <code>direct_tx</code>, <code>flood_rx</code>, <code>direct_rx</code>, <code>recv_errors</code>. Des erreurs qui montent sans que <code>recv</code> suive signalent des collisions ou des CRC ratés.</td>
+            </tr>
+            <tr>
+              <td class="c">stats-core <span class="tag tag-local">local</span></td>
+              <td class="d">Batterie, temps de fonctionnement, longueur de file, drapeaux de débogage.</td>
+            </tr>
+            <tr>
+              <td class="c">clear stats</td>
+              <td class="d">Remet tous les compteurs à zéro. À lancer avant chaque mesure pour avoir une base propre.</td>
+            </tr>
+            <tr><td class="c">ver</td><td class="d">Version du firmware.</td></tr>
+            <tr><td class="c">board</td><td class="d">Nom de la carte.</td></tr>
+            <tr><td class="c">get role</td><td class="d">Rôle configuré du nœud.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="voisins">
+      <h2>Voisinage</h2>
+      <p>
+        La table ne retient que les <strong>répéteurs entendus à zéro saut</strong> —
+        ni les clients, ni les compagnons, ni les adverts arrivés par inondation. Elle
+        vit en mémoire vive et repart vide à chaque démarrage.
+      </p>
+
+      <div class="scroller">
+        <table>
+          <thead>
+            <tr><th>Commande</th><th>Effet</th></tr>
+          </thead>
+          <tbody>
+            <tr><td class="c">neighbors</td><td class="d">Liste au format <code>préfixe:horodatage:snr×4</code>. <strong>Plafonnée aux 8 adverts les plus récents</strong>, quelle que soit la valeur de <code>MAX_NEIGHBOURS</code>.</td></tr>
+            <tr><td class="c">discover.neighbors</td><td class="d">Découverte active à zéro saut, au lieu d'attendre les adverts spontanés.</td></tr>
+            <tr><td class="c">neighbor.remove &lt;préfixe&gt;</td><td class="d">Supprime tous les voisins dont la clé commence par le préfixe. Un espace seul vide la table.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="note">
+        <p>
+          Ce build est compilé avec <code>MAX_NEIGHBOURS=100</code>, mais seule la requête
+          paginée en administration radio voit au-delà de 8 entrées. Aucune entrée n'expire :
+          la table dit « répéteurs entendus depuis le démarrage », pas « répéteurs joignables ».
+          Le champ <code>heard_seconds_ago</code> de la réponse permet de filtrer.
+        </p>
+      </div>
+    </section>
+
+    <section id="routage">
+      <h2>Routage</h2>
+
+      <div class="scroller">
+        <table>
+          <thead>
+            <tr><th>Commande</th><th>Effet</th><th>Défaut</th></tr>
+          </thead>
+          <tbody>
+            <tr><td class="c">get repeat<br>set repeat on|off</td><td class="d">Réémission des paquets. <code>off</code> transforme le nœud en écouteur pur.</td><td class="d">on</td></tr>
+            <tr><td class="c">get loop.detect<br>set loop.detect &lt;état&gt;</td><td class="d"><code>off</code>, <code>minimal</code>, <code>moderate</code>, <code>strict</code>. Rejette les paquets dont le chemin contient déjà l'identifiant du nœud trop de fois — la parade aux tempêtes de diffusion causées par un firmware tiers défectueux.</td><td class="d">off</td></tr>
+            <tr><td class="c">get path.hash.mode<br>set path.hash.mode &lt;0-2&gt;</td><td class="d">Taille du condensat inscrit dans le chemin des adverts.</td><td class="d">0</td></tr>
+            <tr><td class="c">get txdelay<br>set txdelay &lt;0-2&gt;</td><td class="d">Facteur du délai aléatoire avant réémission d'un paquet inondé. La randomisation est essentielle : plusieurs répéteurs entendent la même trame en même temps.</td><td class="d">0.5</td></tr>
+            <tr><td class="c">get direct.txdelay<br>set direct.txdelay &lt;0-2&gt;</td><td class="d">Même chose pour le trafic routé directement.</td><td class="d">0.2</td></tr>
+            <tr><td class="c">get rxdelay<br>set rxdelay &lt;0-20&gt;</td><td class="d">Expérimental. Retarde le traitement selon la qualité de réception, pour que le répéteur le mieux placé réémette en premier. <code>0</code> désactive.</td><td class="d">0.0</td></tr>
+            <tr><td class="c">get dutycycle<br>set dutycycle &lt;1-100&gt;</td><td class="d">Plafond de temps d'antenne, en pourcentage. <code>1</code> correspond à l'exigence européenne la plus stricte.</td><td class="d">50</td></tr>
+            <tr><td class="c">get af<br>set af &lt;0-9&gt;</td><td class="d">Même réglage exprimé en facteur de temps d'antenne : silence d'environ la durée d'émission multipliée par cette valeur.</td><td class="d">1.0</td></tr>
+            <tr><td class="c">get int.thresh<br>set int.thresh &lt;valeur&gt;</td><td class="d">Seuil de détection de canal occupé par RSSI, au-dessus du plancher de bruit. <code>0</code> désactive.</td><td class="d">0.0</td></tr>
+            <tr><td class="c">get cad<br>set cad on|off</td><td class="d">Détection matérielle d'activité sur le canal avant émission.</td><td class="d">off</td></tr>
+            <tr><td class="c">get agc.reset.interval<br>set agc.reset.interval &lt;s&gt;</td><td class="d">Période de réinitialisation du contrôle automatique de gain, arrondie à un multiple de 4. <code>0</code> désactive.</td><td class="d">0</td></tr>
+            <tr><td class="c">get multi.acks<br>set multi.acks 0|1</td><td class="d">Accusés de réception multiples.</td><td class="d">0</td></tr>
+            <tr><td class="c">get flood.max<br>set flood.max &lt;0-64&gt;</td><td class="d">Nombre maximal de sauts pour un paquet inondé.</td><td class="d">64</td></tr>
+            <tr><td class="c">get flood.max.unscoped<br>set flood.max.unscoped &lt;0-64&gt;</td><td class="d">Idem pour un paquet sans région. Suit <code>flood.max</code> tant qu'il n'est pas fixé.</td><td class="d">64</td></tr>
+            <tr><td class="c">get flood.max.advert<br>set flood.max.advert &lt;0-64&gt;</td><td class="d">Idem pour les adverts spécifiquement.</td><td class="d">8</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="adverts">
+      <h2>Adverts</h2>
+
+      <div class="scroller">
+        <table>
+          <thead>
+            <tr><th>Commande</th><th>Effet</th><th>Défaut</th></tr>
+          </thead>
+          <tbody>
+            <tr><td class="c">advert</td><td class="d">Émet immédiatement un advert inondé.</td><td class="d">—</td></tr>
+            <tr><td class="c">advert.zerohop</td><td class="d">Émet un advert à zéro saut — seuls les voisins directs l'entendent.</td><td class="d">—</td></tr>
+            <tr><td class="c">get flood.advert.interval<br>set flood.advert.interval &lt;h&gt;</td><td class="d">Période des adverts inondés, 3 à 168 heures.</td><td class="d">12</td></tr>
+            <tr><td class="c">get advert.interval<br>set advert.interval &lt;min&gt;</td><td class="d">Période des adverts à zéro saut, 60 à 240 minutes, arrondie à un multiple de 2. <code>0</code> désactive.</td><td class="d">0</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="identite">
+      <h2>Identité &amp; système</h2>
+
+      <div class="scroller">
+        <table>
+          <thead>
+            <tr><th>Commande</th><th>Effet</th><th>Défaut</th></tr>
+          </thead>
+          <tbody>
+            <tr><td class="c">get name<br>set name &lt;nom&gt;</td><td class="d">Nom du nœud. Sert aussi d'identifiant client MQTT.</td><td class="d">RAK4631 Observer</td></tr>
+            <tr><td class="c">get lat<br>set lat &lt;degrés&gt;</td><td class="d">Latitude annoncée dans les adverts.</td><td class="d">0</td></tr>
+            <tr><td class="c">get lon<br>set lon &lt;degrés&gt;</td><td class="d">Longitude annoncée dans les adverts.</td><td class="d">0</td></tr>
+            <tr><td class="c">get owner.info<br>set owner.info &lt;texte&gt;</td><td class="d">Texte libre d'identification de l'exploitant.</td><td class="d">vide</td></tr>
+            <tr><td class="c">get public.key</td><td class="d">Clé publique du nœud.</td><td class="d">—</td></tr>
+            <tr><td class="c">get prv.key <span class="tag tag-local">local</span></td><td class="d">Clé privée, 64 caractères hex.</td><td class="d">—</td></tr>
+            <tr><td class="c">set prv.key &lt;hex&gt; <span class="tag tag-local">local</span></td><td class="d">Remplace l'identité du nœud. Change son identifiant sur le mesh <em>et</em> ses topics MQTT.</td><td class="d">—</td></tr>
+            <tr><td class="c">password &lt;nouveau&gt;</td><td class="d">Mot de passe d'administration radio. Sans effet sur telnet et MQTT.</td><td class="d">défini au build</td></tr>
+            <tr><td class="c">get guest.password<br>set guest.password &lt;mdp&gt;</td><td class="d">Mot de passe invité. Sans objet pour un répéteur.</td><td class="d">vide</td></tr>
+            <tr><td class="c">get adc.multiplier<br>set adc.multiplier &lt;0-10&gt;</td><td class="d">Étalonnage de la mesure de batterie. <code>0</code> laisse la valeur de la carte.</td><td class="d">0.0</td></tr>
+            <tr><td class="c">reboot</td><td class="d">Redémarre le nœud.</td><td class="d">—</td></tr>
+            <tr><td class="c">poweroff <span style="white-space:normal">ou</span> shutdown</td><td class="d">Éteint le nœud.</td><td class="d">—</td></tr>
+            <tr><td class="c">start ota</td><td class="d">Ouvre une mise à jour du firmware par radio.</td><td class="d">—</td></tr>
+            <tr><td class="c">erase <span class="tag tag-local">local</span></td><td class="d">Effacement complet, retour à la configuration d'usine — identité comprise.</td><td class="d">—</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="energie">
+      <h2>Énergie</h2>
+      <p>
+        Disponible parce que la carte est compilée avec la gestion d'alimentation nRF52.
+      </p>
+
+      <div class="scroller">
+        <table>
+          <thead>
+            <tr><th>Commande</th><th>Effet</th></tr>
+          </thead>
+          <tbody>
+            <tr><td class="c">powersaving<br>powersaving on|off</td><td class="d">Mise en veille entre les paquets. À laisser sur <code>off</code> pour un nœud alimenté en permanence.</td></tr>
+            <tr><td class="c">get pwrmgt.support</td><td class="d">Fonctions de gestion d'alimentation disponibles.</td></tr>
+            <tr><td class="c">get pwrmgt.source</td><td class="d">Source d'alimentation courante.</td></tr>
+            <tr><td class="c">get pwrmgt.bootreason</td><td class="d">Causes du dernier démarrage et de la dernière extinction. Le premier endroit à regarder après un redémarrage inattendu.</td></tr>
+            <tr><td class="c">get pwrmgt.bootmv</td><td class="d">Tension au démarrage, en millivolts.</td></tr>
+            <tr><td class="c">get bootloader.ver</td><td class="d">Version du bootloader nRF52.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="regions">
+      <h2>Régions</h2>
+      <p>
+        Les régions cantonnent l'inondation à des zones nommées. Les modifications sont
+        en mémoire jusqu'à un <code>region save</code>.
+      </p>
+
+      <div class="scroller">
+        <table>
+          <thead>
+            <tr><th>Commande</th><th>Effet</th></tr>
+          </thead>
+          <tbody>
+            <tr><td class="c">region</td><td class="d">Vide toutes les régions définies et leurs permissions d'inondation.</td></tr>
+            <tr><td class="c">region list &lt;filtre&gt; <span class="tag tag-local">local</span></td><td class="d">Liste filtrée par <code>allowed</code> ou <code>denied</code>.</td></tr>
+            <tr><td class="c">region get &lt;nom&gt;</td><td class="d">Détail d'une région. <code>*</code> désigne la région générique.</td></tr>
+            <tr><td class="c">region put &lt;nom&gt; [parent]</td><td class="d">Crée une région, rattachée à la région générique par défaut.</td></tr>
+            <tr><td class="c">region def &lt;jeton&gt; […]</td><td class="d">Définit toute une hiérarchie en une ligne.</td></tr>
+            <tr><td class="c">region remove &lt;nom&gt;</td><td class="d">Supprime une région.</td></tr>
+            <tr><td class="c">region allowf &lt;nom&gt;</td><td class="d">Autorise l'inondation pour cette région.</td></tr>
+            <tr><td class="c">region denyf &lt;nom&gt;</td><td class="d">L'interdit.</td></tr>
+            <tr><td class="c">region home<br>region home &lt;nom&gt;</td><td class="d">Consulte ou fixe la région d'appartenance du nœud.</td></tr>
+            <tr><td class="c">region default<br>region default &lt;nom&gt;</td><td class="d">Région de portée par défaut. <code>&lt;null&gt;</code> l'efface.</td></tr>
+            <tr><td class="c">region load<br>region load &lt;nom&gt; [flag]</td><td class="d">Chargement en masse d'une liste de régions.</td></tr>
+            <tr><td class="c">region save</td><td class="d">Écrit sur le système de fichiers les changements faits depuis le démarrage.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="acl">
+      <h2>ACL</h2>
+
+      <div class="scroller">
+        <table>
+          <thead>
+            <tr><th>Commande</th><th>Effet</th></tr>
+          </thead>
+          <tbody>
+            <tr><td class="c">get acl <span class="tag tag-local">local</span></td><td class="d">Liste des compagnons connus et de leurs droits.</td></tr>
+            <tr><td class="c">setperm &lt;clé&gt; &lt;droits&gt;</td><td class="d"><code>0</code> invité, <code>1</code> lecture seule, <code>2</code> lecture-écriture, <code>3</code> administrateur. Droits omis, l'entrée est supprimée.</td></tr>
+            <tr><td class="c">get allow.read.only<br>set allow.read.only on|off</td><td class="d">Drapeau de salon en lecture seule. Sans objet pour un répéteur.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="log">
+      <h2>Capture</h2>
+      <p>
+        Enregistre le journal de réception dans le stockage du nœud, puis le vide sur le
+        terminal. Pratique pour une session courte ; pour de la capture continue, c'est le
+        flux MQTT <code>/raw</code> qui fait le travail, avec bien plus de détail.
+      </p>
+
+      <div class="scroller">
+        <table>
+          <thead>
+            <tr><th>Commande</th><th>Effet</th></tr>
+          </thead>
+          <tbody>
+            <tr><td class="c">log start <span class="tag tag-local">local</span></td><td class="d">Démarre la capture.</td></tr>
+            <tr><td class="c">log stop <span class="tag tag-local">local</span></td><td class="d">L'arrête.</td></tr>
+            <tr><td class="c">log <span class="tag tag-local">local</span></td><td class="d">Déverse le journal capturé sur le terminal.</td></tr>
+            <tr><td class="c">log erase <span class="tag tag-local">local</span></td><td class="d">Efface le journal enregistré.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="absent">
+      <h2>Inerte ou absent sur ce build</h2>
+      <p>
+        Ces commandes apparaissent dans la documentation générale de MeshCore. Sur ce
+        firmware précis, elles ne servent à rien — autant le savoir avant de les chercher.
+      </p>
+
+      <div class="scroller">
+        <table>
+          <thead>
+            <tr><th>Commandes</th><th>Statut</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="c">gps<br>gps on|off<br>gps sync<br>gps setloc<br>gps advert</td>
+              <td class="d">
+                <strong>Compilées mais inertes.</strong> Le support GPS est bien inclus,
+                mais l'initialisation des capteurs est volontairement sautée sur les builds
+                observer : elle entre en conflit avec les broches série utilisées par
+                l'Ethernet. Le GPS n'est donc jamais détecté et les commandes ne font rien.
+              </td>
+            </tr>
+            <tr>
+              <td class="c">sensor list<br>sensor get &lt;clé&gt;<br>sensor set &lt;clé&gt; &lt;valeur&gt;</td>
+              <td class="d"><strong>Compilées mais inertes</strong>, pour la même raison.</td>
+            </tr>
+            <tr>
+              <td class="c">get bridge.type<br>get/set bridge.enabled<br>get/set bridge.delay<br>get/set bridge.source<br>get/set bridge.baud<br>get/set bridge.channel<br>get/set bridge.secret</td>
+              <td class="d"><strong>Absentes.</strong> Le pont n'est pas compilé dans cet environnement.</td>
+            </tr>
+            <tr>
+              <td class="c">set extra.sf</td>
+              <td class="d"><strong>Absente.</strong> Réservée au LR2021 ; cette carte porte un SX1262.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="flags">
+      <h2>Flags de build</h2>
+      <p>
+        Hors console : ces réglages se changent dans
+        <code>variants/rak4631/platformio.ini</code> et demandent un reflash.
+      </p>
+
+      <div class="scroller">
+        <table>
+          <thead>
+            <tr><th>Flag</th><th>Effet</th></tr>
+          </thead>
+          <tbody>
+            <tr><td class="c">MESH_PACKET_LOGGING=1</td><td class="d">Trace série de chaque paquet reçu et émis. C'est le réglage à activer quand un paquet « n'arrive pas » : il distingue une trame reçue puis rejetée d'une trame jamais démodulée.</td></tr>
+            <tr><td class="c">MESH_DEBUG=1</td><td class="d">Internes du mesh en verbeux.</td></tr>
+            <tr><td class="c">OBSERVER_DEBUG_LOGGING=1</td><td class="d">Trace de chaque charge utile publiée. Coûteux dans la boucle principale.</td></tr>
+            <tr><td class="c">ENABLE_COMMANDS</td><td class="d">Console distante par MQTT. À retirer pour un observer strictement en lecture.</td></tr>
+            <tr><td class="c">MQTT_HOST<br>MQTT_PORT<br>MQTT_TOPIC</td><td class="d">Broker et préfixe de topic par défaut — <strong>écrasés par la config persistée</strong> dès le premier <code>mqttset</code>.</td></tr>
+            <tr><td class="c">MQTT_RECONNECT_MIN_MS<br>MQTT_RECONNECT_MAX_MS</td><td class="d">Bornes du backoff de reconnexion, 5 s et 60 s par défaut.</td></tr>
+            <tr><td class="c">OBSERVER_QUEUE_LEN</td><td class="d">Profondeur de la file de publication différée, 8 emplacements. Couvre 10 à 15 s de coupure du broker ; au-delà, les plus anciens échantillons sont abandonnés et <code>qdrop</code> monte.</td></tr>
+            <tr><td class="c">MAX_NEIGHBOURS</td><td class="d">Taille de la table de voisins, 100 sur ce build, environ 44 octets par entrée.</td></tr>
+            <tr><td class="c">ADVERT_NAME<br>ADVERT_LAT<br>ADVERT_LON<br>ADMIN_PASSWORD</td><td class="d">Valeurs initiales, écrasées par les préférences enregistrées au démarrage suivant.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+  </main>
+
+  <footer>
+    Établi à partir des sources de ce dépôt — <code>CommonCLI.cpp</code>,
+    <code>MyMesh.cpp</code>, <code>Observer.cpp</code>, <code>EthernetCLI.h</code> —
+    recoupées avec <code>docs/cli_commands.md</code>. Les valeurs par défaut sont celles
+    compilées dans l'environnement <code>RAK_4631_observer_ethernet</code> ; sur un nœud
+    déjà configuré, les préférences enregistrées les remplacent au démarrage.
+  </footer>
+
+</div>
